@@ -6,7 +6,7 @@ import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, RefreshCw, Search,
 import { motion, AnimatePresence } from 'framer-motion';
 
 function FileTreeItem({ entry, depth }: { entry: FileEntry; depth: number }) {
-  const { toggleFolder, openFile, activeTabId, setFileTree } = useAppStore();
+  const { toggleFolder, openFile, activeTabId, setFileTree, activeLocks } = useAppStore();
 
   const handleFolderClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -84,18 +84,27 @@ function FileTreeItem({ entry, depth }: { entry: FileEntry; depth: number }) {
 
   const { icon, color } = getFileIcon(entry.name);
   
-  return (
-    <div
-      onClick={handleFileClick}
-      className={`flex items-center py-1 px-2 cursor-pointer text-text-secondary select-none ${
-        isSelected ? 'bg-primary/10 border-l-2 border-primary text-text-primary' : 'hover:bg-surface-hover border-l-2 border-transparent'
-      }`}
-      style={{ paddingLeft: `${paddingLeft + 8}px` }}
-    >
-      <span className="ml-[14px] mr-2 text-xs font-mono font-bold" style={{ color }}>{icon}</span>
-      <span className={`text-sm truncate ${isSelected ? 'text-text-primary' : ''}`}>{entry.name}</span>
-    </div>
-  );
+    const lock = activeLocks ? (activeLocks[entry.path] || activeLocks[entry.name]) : null;
+
+    return (
+      <div
+        onClick={handleFileClick}
+        className={`flex items-center justify-between py-1 px-2 cursor-pointer text-text-secondary select-none ${
+          isSelected ? 'bg-primary/10 border-l-2 border-primary text-text-primary' : 'hover:bg-surface-hover border-l-2 border-transparent'
+        }`}
+        style={{ paddingLeft: `${paddingLeft + 8}px` }}
+      >
+        <div className="flex items-center min-w-0">
+          <span className="ml-[14px] mr-2 text-xs font-mono font-bold" style={{ color }}>{icon}</span>
+          <span className={`text-sm truncate ${isSelected ? 'text-text-primary' : ''}`}>{entry.name}</span>
+        </div>
+        {lock && (
+          <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary border border-primary/30 font-mono shrink-0 animate-pulse" title={`Currently edited by ${lock.agentName}`}>
+            {lock.agentName}
+          </span>
+        )}
+      </div>
+    );
 }
 
 export function FileExplorer() {

@@ -77,29 +77,57 @@ export const AIChat: React.FC = () => {
         throw new Error('Vendra API not available');
       }
 
+      // Brain coordination: report intent and acquire lock if file action
+      if (['create_file', 'edit_file', 'delete_file'].includes(name) && args.path && api.brain) {
+        await api.brain.acquireLock({ filePath: args.path, agentId: 'vendra-ai', agentName: 'Vendra AI' });
+      }
+
+      let res: any;
       switch (name) {
         case 'create_file':
         case 'edit_file':
           await api.fs.writeFile(args.path, args.content);
-          return { success: true, path: args.path };
+          res = { success: true, path: args.path };
+          break;
         case 'delete_file':
           await api.fs.deleteFile(args.path);
-          return { success: true, path: args.path };
+          res = { success: true, path: args.path };
+          break;
         case 'read_file':
           const content = await api.fs.readFile(args.path);
-          return { content };
+          res = { content };
+          break;
         case 'run_command':
           const result = await api.os.exec(args.command, workspacePath || '');
-          return { result };
+          res = { result };
+          break;
         case 'search_codebase':
           const searchResults = await api.fs.search(workspacePath || '', args.query);
-          return { results: searchResults };
+          res = { results: searchResults };
+          break;
         case 'list_files':
           const files = await api.fs.readDir(args.path || workspacePath || '');
-          return { files };
+          res = { files };
+          break;
         default:
           return { error: `Unknown tool: ${name}` };
       }
+
+      // Brain coordination: report completed action and release lock
+      if (api.brain) {
+        await api.brain.reportAction({
+          agentId: 'vendra-ai',
+          agentName: 'Vendra AI',
+          action: name,
+          targetFile: args.path || args.command,
+          summary: name === 'run_command' ? `Ran ${args.command}` : `Modified ${args.path}`,
+        });
+        if (args.path) {
+          await api.brain.releaseLock({ filePath: args.path, agentId: 'vendra-ai' });
+        }
+      }
+
+      return res;
     } catch (error: any) {
       return { error: error.message || 'Tool execution failed' };
     }

@@ -242,3 +242,207 @@ ipcMain.handle('git:log', async (_event, cwd, count = 20) => {
 ipcMain.handle('shell:openExternal', async (_event, url) => {
   await shell.openExternal(url);
 });
+
+// ─── Brain & Multi-Agent Coordination Layer ────────────────────────
+const activeLocks = new Map(); // filePath -> { agentId, agentName, timestamp }
+const brainHistory = []; // list of recent actions
+const runningCliProcesses = new Map(); // agentId -> childProcess
+let workspaceWatcher = null;
+
+function broadcastToWindow(channel, data) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, data);
+  }
+}
+
+// Watch workspace for live changes made by ANY CLI or process
+ipcMain.handle('workspace:watch', async (_event, workspacePath) => {
+  if (workspaceWatcher) {
+    try { workspaceWatcher.close(); } catch {}
+    workspaceWatcher = null;
+  }
+
+  if (!workspacePath || !fs.existsSync(workspacePath)) {
+    return { success: false };
+  }
+
+  try {
+    // Create .vendracode coordination directory if it doesn't exist
+    const vendraDir = path.join(workspacePath, '.vendracode');
+    if (!fs.existsSync(vendraDir)) {
+      await fs.promises.mkdir(vendraDir, { recursive: true });
+    }
+
+    // Write initial coordination brain file for external CLIs to read
+    const brainFilePath = path.join(vendraDir, 'brain.json');
+    await fs.promises.writeFile(
+      brainFilePath,
+      JSON.stringify({ activeLocks: Object.fromEntries(activeLocks), recentActions: brainHistory.slice(-20) }, null, 2),
+      'utf-8'
+    );
+
+    let debounceTimer = null;
+    workspaceWatcher = fs.watch(workspacePath, { recursive: true }, (eventType, filename) => {
+      if (!filename || filename.includes('node_modules') || filename.includes('.git')) return;
+
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        broadcastToWindow('workspace:fileChanged', { eventType, filename });
+      }, 150);
+    });
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('brain:acquireLock', async (_event, { filePath, agentId, agentName }) => {
+  const existing = activeLocks.get(filePath);
+  if (existing && existing.agentId !== agentId) {
+    return {
+      success: false,
+      conflict: true,
+      lockedBy: existing,
+      warning: `Conflict detected! File ${path.basename(filePath)} is already locked by ${existing.agentName}`,
+    };
+  }
+
+  const lockInfo = { agentId, agentName, timestamp: Date.now() };
+  activeLocks.set(filePath, lockInfo);
+  broadcastToWindow('brain:locksUpdated', Object.fromEntries(activeLocks));
+  return { success: true, lock: lockInfo };
+});
+
+ipcMain.handle('brain:releaseLock', async (_event, { filePath, agentId }) => {
+  const existing = activeLocks.get(filePath);
+  if (existing && existing.agentId === agentId) {
+    activeLocks.delete(filePath);
+    broadcastToWindow('brain:locksUpdated', Object.fromEntries(activeLocks));
+    return { success: true };
+  }
+  return { success: false };
+});
+
+ipcMain.handle('brain:reportAction', async (_event, action) => {
+  const entry = {
+    id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    ...action,
+    timestamp: Date.now(),
+  };
+  brainHistory.push(entry);
+  if (brainHistory.length > 200) brainHistory.shift();
+
+  broadcastToWindow('brain:actionRecorded', entry);
+  return entry;
+});
+
+// ─── Local Agent CLI Detection & Execution ─────────────────────────
+ipcMain.handle('cli:detectAll', async () => {
+  const clis = [
+    { id: 'agy', name: 'Antigravity CLI', bin: 'agy', fallbackPaths: ['/home/ibrohim/.local/bin/agy', '/usr/local/bin/agy'] },
+    { id: 'cline', name: 'Cline CLI', bin: 'cline', fallbackPaths: ['/usr/bin/cline', '/usr/local/bin/cline'] },
+    { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', fallbackPaths: ['/home/ibrohim/.opencode/bin/opencode', '/usr/local/bin/opencode'] },
+    { id: 'claude', name: 'Claude Code CLI', bin: 'claude', fallbackPaths: ['/usr/bin/claude', '/usr/local/bin/claude'] },
+  ];
+
+  const results = await Promise.all(
+    clis.map(async (cli) => {
+      return new Promise((resolve) => {
+        exec(`which ${cli.bin}`, (err, stdout) => {
+          let detectedPath = (!err && stdout.trim()) ? stdout.trim() : null;
+
+          if (!detectedPath) {
+            for (const fp of cli.fallbackPaths) {
+              if (fs.existsSync(fp)) {
+                detectedPath = fp;
+                break;
+              }
+            }
+          }
+
+          resolve({
+            id: cli.id,
+            name: cli.name,
+            bin: cli.bin,
+            isInstalled: !!detectedPath,
+            path: detectedPath,
+            version: 'Installed',
+          });
+        });
+      });
+    })
+  );
+
+  return results;
+});
+
+ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cwd, prompt }) => {
+  if (runningCliProcesses.has(agentId)) {
+    return { success: false, error: 'Agent already running' };
+  }
+
+  try {
+    const procArgs = [...args];
+    if (prompt) {
+      procArgs.push(prompt);
+    }
+
+    const child = spawn(cliBin, procArgs, {
+      cwd: cwd || process.env.HOME,
+      env: {
+        ...process.env,
+        VENDRA_COORDINATION: '1',
+        VENDRA_AGENT_ID: agentId,
+      },
+    });
+
+    runningCliProcesses.set(agentId, child);
+
+    child.stdout.on('data', (data) => {
+      const text = data.toString();
+      broadcastToWindow('cli:agentOutput', { agentId, type: 'stdout', text });
+
+      // Brain coordination: parse tool usage or file edits from CLI outputs
+      const fileMatch = text.match(/(?:editing|wrote|created|patching|touching|reading)\s+([a-zA-Z0-9_\-\./\\]+)/i);
+      if (fileMatch) {
+        const touchedFile = fileMatch[1];
+        activeLocks.set(touchedFile, { agentId, agentName: cliBin, timestamp: Date.now() });
+        broadcastToWindow('brain:locksUpdated', Object.fromEntries(activeLocks));
+      }
+    });
+
+    child.stderr.on('data', (data) => {
+      broadcastToWindow('cli:agentOutput', { agentId, type: 'stderr', text: data.toString() });
+    });
+
+    child.on('close', (code) => {
+      runningCliProcesses.delete(agentId);
+      broadcastToWindow('cli:agentExit', { agentId, code });
+
+      // Clean up locks for this agent
+      for (const [file, lock] of activeLocks.entries()) {
+        if (lock.agentId === agentId) activeLocks.delete(file);
+      }
+      broadcastToWindow('brain:locksUpdated', Object.fromEntries(activeLocks));
+    });
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('cli:stopAgent', async (_event, agentId) => {
+  const child = runningCliProcesses.get(agentId);
+  if (child) {
+    try {
+      child.kill('SIGTERM');
+      runningCliProcesses.delete(agentId);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+  return { success: false, error: 'Agent not found' };
+});

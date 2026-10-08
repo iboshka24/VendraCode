@@ -4,7 +4,7 @@ import { StatusBar } from '@/components/StatusBar';
 import { CodeEditor } from '@/components/CodeEditor';
 import { TerminalPanel } from '@/components/Terminal';
 import { AnimatePresence, motion } from 'framer-motion';
-import { lazy, Suspense } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
 
 // Lazy-load heavier panels
 const FileExplorer = lazy(() => import('@/components/FileExplorer').then(m => ({ default: m.FileExplorer })));
@@ -24,7 +24,58 @@ function LoadingFallback() {
 }
 
 function App() {
-  const { activeView, isChatOpen } = useAppStore();
+  const {
+    activeView,
+    isChatOpen,
+    workspacePath,
+    setFileTree,
+    setLocalCLIs,
+    setActiveLocks,
+    addBrainAction,
+  } = useAppStore();
+
+  // Initialize Local CLI detection & Brain coordination listeners
+  useEffect(() => {
+    if (!window.vendraAPI) return;
+
+    // Detect installed agent CLIs (agy, cline, opencode, claude)
+    window.vendraAPI.cli.detectAll().then((clis) => {
+      setLocalCLIs(clis);
+    });
+
+    // Listen to live locks & coordination actions
+    const removeLocksListener = window.vendraAPI.brain.onLocksUpdated((locks) => {
+      setActiveLocks(locks);
+    });
+
+    const removeActionListener = window.vendraAPI.brain.onActionRecorded((action) => {
+      addBrainAction(action);
+    });
+
+    return () => {
+      removeLocksListener();
+      removeActionListener();
+    };
+  }, [setLocalCLIs, setActiveLocks, addBrainAction]);
+
+  // Watch workspace when path changes so that ANY external CLI action updates the IDE in real-time
+  useEffect(() => {
+    if (!workspacePath || !window.vendraAPI) return;
+
+    window.vendraAPI.workspace.watch(workspacePath);
+
+    const removeFileWatcher = window.vendraAPI.workspace.onFileChanged(async ({ eventType, filename }) => {
+      // Auto-reload the directory tree when files change externally
+      try {
+        const entries = await window.vendraAPI.fs.readDir(workspacePath);
+        setFileTree(entries);
+      } catch {}
+    });
+
+    return () => {
+      removeFileWatcher();
+    };
+  }, [workspacePath, setFileTree]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-background text-text-primary overflow-hidden">

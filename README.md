@@ -21,15 +21,17 @@ VendraCode is an open-source, multiplayer AI-native development environment (IDE
 
 ### Key Features
 
-- 🤖 **AI Agent Integration** — Built-in AI assistant that can create, edit, and delete files, run terminal commands, and search your codebase
+- 🧠 **The Shared Brain (Native Harness)** — Central coordination layer syncing file changes, locks, and agent progress in real time (`.vendracode/brain.json`)
+- 🤖 **Local Agent CLIs Support** — Native integration with **Antigravity CLI (`agy`)**, **Cline CLI (`cline`)**, **OpenCode CLI (`opencode`)**, and **Claude Code (`claude`)**
+- ⚠️ **Overlap Warnings & Advisory Locks** — Surfaces potential work duplication or file conflicts between running agents before conflicts occur
+- ⚡ **Built-in AI Coding Agent** — OpenCode-style tool-calling loop that creates, edits, and deletes files, executes terminal commands, and searches code
 - 🔌 **Multi-Provider LLM Support** — Works with OpenAI, Anthropic, NVIDIA NIM, and any OpenAI-compatible API
-- 🎯 **Mission Control** — Dashboard showing all active AI agent sessions, their status, and progress
-- ✅ **Approval System** — Review and approve/deny agent actions before they execute
-- 👥 **Multiplayer Sessions** — Share coding sessions with teammates (coming soon)
-- 🔄 **Live Sync** — Git snapshots and real-time file synchronization
+- 🎯 **Mission Control** — Dashboard showing all active AI agent sessions in individual lanes with live status and action streams
+- ✅ **Approval System** — Independent security gates to review and approve/deny agent file changes and shell commands
+- 🔄 **Live Sync & Workspace Watcher** — Real-time recursive file system sync between all CLI agents and the IDE
 - 📝 **Monaco Editor** — Full VS Code editing experience with syntax highlighting for 30+ languages
-- 💻 **Integrated Terminal** — Built-in terminal with xterm.js
-- 🎨 **Beautiful Dark UI** — Modern, polished interface with smooth animations
+- 💻 **Integrated Terminal** — Built-in terminal with xterm.js connected via IPC
+- 🎨 **Beautiful Dark UI** — Modern, polished interface with smooth Framer Motion animations
 
 ## 📸 Screenshots
 

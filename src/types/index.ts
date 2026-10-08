@@ -29,6 +29,49 @@ export interface VendraAPI {
   shell: {
     openExternal: (url: string) => Promise<void>;
   };
+  cli: {
+    detectAll: () => Promise<LocalCLIDetected[]>;
+    spawnAgent: (opts: { agentId: string; cliBin: string; args?: string[]; cwd?: string; prompt?: string }) => Promise<{ success: boolean; error?: string }>;
+    stopAgent: (agentId: string) => Promise<{ success: boolean; error?: string }>;
+    onAgentOutput: (callback: (data: { agentId: string; type: 'stdout' | 'stderr'; text: string }) => void) => () => void;
+    onAgentExit: (callback: (data: { agentId: string; code: number }) => void) => () => void;
+  };
+  brain: {
+    acquireLock: (opts: { filePath: string; agentId: string; agentName: string }) => Promise<{ success: boolean; conflict?: boolean; lockedBy?: BrainLock; warning?: string }>;
+    releaseLock: (opts: { filePath: string; agentId: string }) => Promise<{ success: boolean }>;
+    reportAction: (action: Omit<BrainAction, 'id' | 'timestamp'>) => Promise<BrainAction>;
+    onLocksUpdated: (callback: (locks: Record<string, BrainLock>) => void) => () => void;
+    onActionRecorded: (callback: (action: BrainAction) => void) => () => void;
+  };
+  workspace: {
+    watch: (path: string) => Promise<{ success: boolean; error?: string }>;
+    onFileChanged: (callback: (event: { eventType: string; filename: string }) => void) => () => void;
+  };
+}
+
+export interface LocalCLIDetected {
+  id: string;
+  name: string;
+  bin: string;
+  isInstalled: boolean;
+  path: string | null;
+  version: string;
+}
+
+export interface BrainLock {
+  agentId: string;
+  agentName: string;
+  timestamp: number;
+}
+
+export interface BrainAction {
+  id: string;
+  agentId: string;
+  agentName: string;
+  action: string;
+  targetFile?: string;
+  summary: string;
+  timestamp: number;
 }
 
 declare global {

@@ -48,4 +48,48 @@ contextBridge.exposeInMainWorld('vendraAPI', {
   shell: {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   },
+
+  // Local CLI Agent Integration (agy, cline, opencode, claude)
+  cli: {
+    detectAll: () => ipcRenderer.invoke('cli:detectAll'),
+    spawnAgent: (opts) => ipcRenderer.invoke('cli:spawnAgent', opts),
+    stopAgent: (agentId) => ipcRenderer.invoke('cli:stopAgent', agentId),
+    onAgentOutput: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('cli:agentOutput', handler);
+      return () => ipcRenderer.removeListener('cli:agentOutput', handler);
+    },
+    onAgentExit: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('cli:agentExit', handler);
+      return () => ipcRenderer.removeListener('cli:agentExit', handler);
+    },
+  },
+
+  // The Brain (Coordination & Overlap Detection)
+  brain: {
+    acquireLock: (opts) => ipcRenderer.invoke('brain:acquireLock', opts),
+    releaseLock: (opts) => ipcRenderer.invoke('brain:releaseLock', opts),
+    reportAction: (action) => ipcRenderer.invoke('brain:reportAction', action),
+    onLocksUpdated: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('brain:locksUpdated', handler);
+      return () => ipcRenderer.removeListener('brain:locksUpdated', handler);
+    },
+    onActionRecorded: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('brain:actionRecorded', handler);
+      return () => ipcRenderer.removeListener('brain:actionRecorded', handler);
+    },
+  },
+
+  // Workspace Watcher
+  workspace: {
+    watch: (path) => ipcRenderer.invoke('workspace:watch', path),
+    onFileChanged: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('workspace:fileChanged', handler);
+      return () => ipcRenderer.removeListener('workspace:fileChanged', handler);
+    },
+  },
 });

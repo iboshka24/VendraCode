@@ -13,7 +13,11 @@ export const MissionControl: React.FC = () => {
     approvals,
     resolveApproval,
     addAgentLane,
-    updateAgentLane
+    updateAgentLane,
+    activeLocks,
+    brainActions,
+    localCLIs,
+    workspacePath,
   } = useAppStore();
 
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
@@ -23,14 +27,25 @@ export const MissionControl: React.FC = () => {
 
   const fileOverlaps = useMemo(() => {
     const map: Record<string, string[]> = {};
+    
+    // Check files from agents
     agentLanes.forEach(agent => {
       agent.filesEditing.forEach(file => {
         if (!map[file]) map[file] = [];
-        map[file].push(agent.name);
+        if (!map[file].includes(agent.name)) map[file].push(agent.name);
       });
     });
+
+    // Check files from activeLocks (CLI agents like agy, cline, opencode)
+    if (activeLocks) {
+      Object.entries(activeLocks).forEach(([file, lock]) => {
+        if (!map[file]) map[file] = [];
+        if (!map[file].includes(lock.agentName)) map[file].push(lock.agentName);
+      });
+    }
+
     return Object.entries(map).filter(([_, agents]) => agents.length > 1);
-  }, [agentLanes]);
+  }, [agentLanes, activeLocks]);
 
   const handleCreateAgent = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,6 +77,32 @@ export const MissionControl: React.FC = () => {
       case 'error': return 'text-danger';
       case 'completed': return 'text-accent';
       default: return 'text-text-muted';
+    }
+  };
+
+  const handleLaunchCLI = async (cliBin: string, cliName: string) => {
+    const agentId = `cli-${cliBin}-${Date.now()}`;
+    addAgentLane({
+      id: agentId,
+      name: cliName,
+      model: `${cliBin} CLI Process`,
+      provider: 'custom',
+      status: 'running',
+      currentTask: `Active ${cliName} process coordinating with Brain`,
+      filesEditing: [],
+      progress: 40,
+      branch: 'main',
+      messages: [],
+      avatar: cliBin.substring(0, 2).toUpperCase(),
+      color: '#8b5cf6',
+    });
+
+    if (window.vendraAPI) {
+      await window.vendraAPI.cli.spawnAgent({
+        agentId,
+        cliBin,
+        cwd: workspacePath || undefined,
+      });
     }
   };
 
@@ -100,13 +141,28 @@ export const MissionControl: React.FC = () => {
             <Bot size={20} />
             Active Agents
           </h2>
-          <button 
-            onClick={() => setIsCreatingAgent(true)}
-            className="flex items-center gap-2 text-sm px-3 py-1.5 bg-primary/20 text-primary hover:bg-primary/30 rounded-lg transition-colors"
-          >
-            <Plus size={16} />
-            Create New Agent
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Quick Launch Buttons for detected Local CLIs */}
+            {localCLIs && localCLIs.filter(c => c.isInstalled).map(cli => (
+              <button
+                key={cli.id}
+                onClick={() => handleLaunchCLI(cli.bin, cli.name)}
+                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 bg-surface hover:bg-surface-hover border border-border rounded-lg text-text-primary transition-colors font-mono"
+                title={`Launch ${cli.name} lane`}
+              >
+                <Plus size={12} className="text-primary" />
+                {cli.bin}
+              </button>
+            ))}
+
+            <button 
+              onClick={() => setIsCreatingAgent(true)}
+              className="flex items-center gap-2 text-sm px-3 py-1.5 bg-primary/20 text-primary hover:bg-primary/30 rounded-lg transition-colors"
+            >
+              <Plus size={16} />
+              Create Custom Agent
+            </button>
+          </div>
         </div>
 
         {isCreatingAgent && (
@@ -235,7 +291,12 @@ export const MissionControl: React.FC = () => {
                     <div className="flex gap-1.5">
                       {agent.status === 'running' ? (
                         <button 
-                          onClick={() => updateAgentLane(agent.id, { status: 'idle' })}
+                          onClick={() => {
+                            updateAgentLane(agent.id, { status: 'idle' });
+                            if (agent.id.startsWith('cli-') && window.vendraAPI) {
+                              window.vendraAPI.cli.stopAgent(agent.id);
+                            }
+                          }}
                           className="p-1.5 text-text-muted hover:text-warning hover:bg-warning/10 rounded transition-colors"
                           title="Pause Agent"
                         >
@@ -259,7 +320,7 @@ export const MissionControl: React.FC = () => {
         </div>
       </div>
 
-      <div>
+      <div className="mb-8">
         <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">
           <AlertTriangle className="text-warning" size={20} />
           Pending Approvals
@@ -317,6 +378,45 @@ export const MissionControl: React.FC = () => {
                 </motion.div>
               ))}
             </AnimatePresence>
+          )}
+        </div>
+      </div>
+
+      {/* Shared Brain Coordination Feed */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold flex items-center gap-2">
+            <Zap className="text-primary" size={20} />
+            The Shared Brain — Live Coordination Stream
+          </h2>
+          <span className="text-xs text-text-muted font-mono">
+            Synced with .vendracode/brain.json
+          </span>
+        </div>
+
+        <div className="bg-surface border border-border rounded-xl p-4 space-y-2 max-h-60 overflow-y-auto">
+          {brainActions.length === 0 ? (
+            <div className="text-sm text-text-muted text-center py-6">
+              Agents and CLIs (agy, cline, opencode) automatically stream their file locks and thoughts here.
+            </div>
+          ) : (
+            brainActions.map((act) => (
+              <div key={act.id} className="text-xs flex items-center justify-between p-2 rounded bg-background border border-border/60">
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 rounded bg-primary/20 text-primary font-mono font-medium">
+                    {act.agentName}
+                  </span>
+                  <span className="text-text-primary font-medium">{act.action}</span>
+                  {act.targetFile && (
+                    <span className="font-mono text-text-muted">({act.targetFile})</span>
+                  )}
+                  <span className="text-text-secondary">{act.summary}</span>
+                </div>
+                <span className="text-[10px] text-text-muted font-mono">
+                  {new Date(act.timestamp).toLocaleTimeString()}
+                </span>
+              </div>
+            ))
           )}
         </div>
       </div>

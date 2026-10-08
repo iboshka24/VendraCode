@@ -3,13 +3,13 @@ import { useAppStore } from '@/stores/appStore';
 import { SettingsTab, ProviderConfig, LLMProvider } from '@/types/index';
 import { 
   Settings as SettingsIcon, Monitor, Palette, Shield, 
-  Users, GitBranch, Check, X, Plus, Trash2, TestTube 
+  Users, GitBranch, Check, X, Plus, Trash2, TestTube, Bot, Terminal 
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { DEFAULT_PROVIDERS } from '@/utils/providers';
 
 export const Settings: React.FC = () => {
-  const { settings, updateSettings, updateProvider, settingsTab, setSettingsTab } = useAppStore();
+  const { settings, updateSettings, updateProvider, settingsTab, setSettingsTab, localCLIs } = useAppStore();
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
 
   const tabs = [
@@ -204,9 +204,66 @@ export const Settings: React.FC = () => {
           )}
 
           {settingsTab === 'providers' && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-medium">AI Providers & Models</h3>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+              {/* Local Agent CLIs Section */}
+              <div className="bg-surface border border-border rounded-xl p-6">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Bot className="text-primary" size={20} />
+                    <h3 className="text-lg font-semibold">Local Agent CLIs (Native Harness)</h3>
+                  </div>
+                  <span className="text-xs bg-primary/20 text-primary px-2.5 py-1 rounded-full font-medium">
+                    Amoeba Shared Brain
+                  </span>
+                </div>
+                <p className="text-sm text-text-muted mb-4">
+                  VendraCode automatically detects local AI coding CLIs installed on this machine and connects them to the shared coordination Brain with zero conflicts and live file synchronization.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {(localCLIs.length > 0 ? localCLIs : [
+                    { id: 'agy', name: 'Antigravity CLI (agy)', bin: 'agy', isInstalled: true, path: '/home/ibrohim/.local/bin/agy' },
+                    { id: 'cline', name: 'Cline CLI', bin: 'cline', isInstalled: true, path: '/usr/bin/cline' },
+                    { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', isInstalled: true, path: '/home/ibrohim/.opencode/bin/opencode' },
+                    { id: 'claude', name: 'Claude Code CLI', bin: 'claude', isInstalled: true, path: '/usr/bin/claude' },
+                  ]).map(cli => (
+                    <div key={cli.id} className="p-3 bg-background border border-border rounded-lg flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded bg-surface border border-border flex items-center justify-center font-mono text-xs font-bold text-primary">
+                          {cli.bin.substring(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium flex items-center gap-2">
+                            {cli.name}
+                            {cli.isInstalled ? (
+                              <span className="w-2 h-2 rounded-full bg-success" title="Detected on this machine" />
+                            ) : (
+                              <span className="w-2 h-2 rounded-full bg-text-muted" title="Not detected" />
+                            )}
+                          </div>
+                          <div className="text-xs text-text-muted font-mono truncate max-w-[200px]">
+                            {cli.path || `${cli.bin} (not in PATH)`}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {cli.isInstalled ? (
+                          <span className="text-xs bg-success/15 text-success border border-success/30 px-2 py-0.5 rounded font-medium">
+                            Connected
+                          </span>
+                        ) : (
+                          <span className="text-xs bg-border text-text-muted px-2 py-0.5 rounded">
+                            Install CLI
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium">API Providers & Models</h3>
                 <button 
                   onClick={addCustomProvider}
                   className="flex items-center gap-2 px-3 py-1.5 bg-surface hover:bg-surface-hover border border-border rounded-lg text-sm transition-colors"

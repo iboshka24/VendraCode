@@ -83,6 +83,14 @@ interface AppState {
   setSearchQuery: (q: string) => void;
   isSearchOpen: boolean;
   toggleSearch: () => void;
+
+  // Local CLIs & Brain Coordination
+  localCLIs: LocalCLIDetected[];
+  setLocalCLIs: (clis: LocalCLIDetected[]) => void;
+  activeLocks: Record<string, BrainLock>;
+  setActiveLocks: (locks: Record<string, BrainLock>) => void;
+  brainActions: BrainAction[];
+  addBrainAction: (action: BrainAction) => void;
 }
 
 const loadSettings = (): AppSettings => {
@@ -263,4 +271,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSearchQuery: (q) => set({ searchQuery: q }),
   isSearchOpen: false,
   toggleSearch: () => set((s) => ({ isSearchOpen: !s.isSearchOpen })),
+
+  // Local CLIs & Brain Coordination
+  localCLIs: [],
+  setLocalCLIs: (clis) => set({ localCLIs: clis }),
+  activeLocks: {},
+  setActiveLocks: (locks) => set({ activeLocks: locks }),
+  brainActions: [],
+  addBrainAction: (action) => set((s) => ({ brainActions: [action, ...s.brainActions].slice(0, 100) })),
 }));
+
