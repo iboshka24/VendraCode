@@ -5,6 +5,7 @@ import {
   Search, GitBranch, Zap, Sparkles
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { VendraLogo } from './VendraLogo';
 
 export function TitleBar() {
   const { activeView, setActiveView, toggleChat, isChatOpen, toggleTerminal, toggleSearch, toggleShare, workspacePath } = useAppStore();
@@ -20,11 +21,9 @@ export function TitleBar() {
       <div className="flex items-center gap-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
         {/* Amoeba Brand Mark */}
         <div className="flex items-center gap-2 mr-1">
-          <div className="w-6 h-6 rounded-md bg-pop flex items-center justify-center shadow-md">
-            <span className="text-popfg font-black text-xs">V</span>
-          </div>
-          <span className="font-bold text-text-primary tracking-tight text-xs">
-            VendraCode
+          <VendraLogo size={22} />
+          <span className="font-bold text-text-primary tracking-tight text-xs font-mono">
+            Vendra<strong className="text-ok font-black">Code</strong>
           </span>
           <span className="text-[10px] text-text-muted font-mono bg-chip px-1.5 py-0.5 rounded border border-border">
             {repoName}

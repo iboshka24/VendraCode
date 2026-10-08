@@ -1,92 +1,283 @@
-import React, { useState } from 'react';
-import { Users, Copy, Check, Globe, Shield, GitBranch, X, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { 
+  Users, Copy, Check, Globe, Shield, GitBranch, X, 
+  Github, Download, ArrowRight, Cloud, RefreshCw, Layers, Sparkles 
+} from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAppStore } from '@/stores/appStore';
 
 export const ShareSessionModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
+  const { workspacePath, setWorkspacePath, setFileTree } = useAppStore();
+  const [activeTab, setActiveTab] = useState<'share' | 'join'>('share');
   const [copied, setCopied] = useState(false);
-  const sessionUrl = 'https://brain.vendra.uz/session/lobby-join-race?token=vd-live-8a13c2';
+  const [githubRepoUrl, setGithubRepoUrl] = useState('https://github.com/ibrohim/VendraCode');
+  const [sessionId, setSessionId] = useState('lobby-join-race');
+  const [joinUrlInput, setJoinUrlInput] = useState('');
+  const [isCloning, setIsCloning] = useState(false);
+  const [cloneStatus, setCloneStatus] = useState<string | null>(null);
+
+  // Auto-detect Git remote origin from current workspace
+  useEffect(() => {
+    if (!isOpen || !workspacePath) return;
+
+    if (window.vendraAPI?.os) {
+      window.vendraAPI.os.exec('git remote get-url origin', workspacePath).then((res) => {
+        if (res.stdout && res.stdout.trim()) {
+          const origin = res.stdout.trim();
+          // Convert git@github.com:user/repo.git to https://github.com/user/repo
+          const httpUrl = origin
+            .replace(/^git@github\.com:/, 'https://github.com/')
+            .replace(/\.git$/, '');
+          setGithubRepoUrl(httpUrl);
+        }
+      }).catch(() => {});
+    }
+  }, [isOpen, workspacePath]);
 
   if (!isOpen) return null;
 
+  const fullSessionUrl = `https://brain.vendra.uz/session/${sessionId}?repo=${encodeURIComponent(githubRepoUrl)}&token=vd-live-${Math.random().toString(36).substring(2, 8)}`;
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(sessionUrl);
+    navigator.clipboard.writeText(fullSessionUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleJoinFriendSession = async () => {
+    if (!joinUrlInput.trim()) return;
+
+    setIsCloning(true);
+    setCloneStatus('Parsing friend session & GitHub repository...');
+
+    try {
+      let targetRepo = '';
+      try {
+        const parsed = new URL(joinUrlInput.trim());
+        targetRepo = parsed.searchParams.get('repo') || '';
+      } catch {
+        targetRepo = joinUrlInput.trim();
+      }
+
+      if (targetRepo && window.vendraAPI?.os) {
+        const repoName = targetRepo.split('/').pop()?.replace(/\.git$/, '') || 'shared-repo';
+        const targetDir = `/home/ibrohim/${repoName}`;
+
+        setCloneStatus(`Cloning ${targetRepo} into isolated worktree...`);
+
+        // Check if directory already exists or clone
+        const cloneRes = await window.vendraAPI.os.exec(
+          `if [ -d "${targetDir}" ]; then cd "${targetDir}" && git pull origin main; else git clone "${targetRepo}" "${targetDir}"; fi`
+        );
+
+        if (cloneRes.error && !cloneRes.stdout) {
+          throw new Error(cloneRes.stderr || cloneRes.error);
+        }
+
+        setCloneStatus('✓ Successfully synchronized repository! Switching workspace...');
+        setWorkspacePath(targetDir);
+        localStorage.setItem('vendracode-workspace', targetDir);
+
+        const entries = await window.vendraAPI.fs.readDir(targetDir);
+        setFileTree(entries);
+
+        setTimeout(() => {
+          setIsCloning(false);
+          setCloneStatus(null);
+          onClose();
+        }, 1200);
+      } else {
+        throw new Error('Please enter a valid session link with a linked GitHub repo');
+      }
+    } catch (err: any) {
+      setCloneStatus(`⚠️ Error: ${err.message}`);
+      setIsCloning(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm select-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md select-none">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="w-full max-w-md bg-surface border border-border-light rounded-2xl shadow-2xl overflow-hidden p-5"
+        className="w-full max-w-lg bg-[#121316] border border-[#262837] rounded-2xl shadow-2xl overflow-hidden p-6 text-text-primary"
       >
+        {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-border mb-4">
-          <div className="flex items-center gap-2">
-            <Users size={18} className="text-accent" />
-            <h3 className="font-bold text-sm text-text-primary">Share Multiplayer Session</h3>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-accent/20 border border-accent/40 flex items-center justify-center text-accent">
+              <Users size={16} />
+            </div>
+            <div>
+              <h3 className="font-bold text-sm text-text-primary">Amoeba Multiplayer Swarm</h3>
+              <p className="text-[11px] text-text-muted">Cloudflare Edge Subdomain · brain.vendra.uz</p>
+            </div>
           </div>
-          <button onClick={onClose} className="btn btn-ghost h-6 w-6 p-0">
-            <X size={14} />
+          <button onClick={onClose} className="btn btn-ghost h-7 w-7 p-0">
+            <X size={15} />
           </button>
         </div>
 
-        <p className="text-xs text-text-secondary leading-relaxed mb-4">
-          Teammates can join this session in parallel with their own local agent CLIs (Claude Code, Codex, OpenCode). Live cursors, file locks, and git snapshots will sync automatically via The Shared Brain.
-        </p>
-
-        {/* Share Link Box */}
-        <div className="p-3 bg-bgdeep rounded-xl border border-border mb-4">
-          <label className="block text-[10px] text-text-muted font-semibold uppercase tracking-wider mb-1">
-            Session URL (brain.vendra.uz)
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              readOnly
-              value={sessionUrl}
-              className="w-full bg-transparent text-xs font-mono text-accent outline-none truncate"
-            />
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="btn btn-primary h-7 px-2.5 text-xs shrink-0"
-            >
-              {copied ? <Check size={13} /> : <Copy size={13} />}
-              <span>{copied ? 'Copied' : 'Copy'}</span>
-            </button>
-          </div>
+        {/* Tab Switcher */}
+        <div className="flex bg-chip p-1 rounded-xl mb-4 border border-border">
+          <button
+            type="button"
+            onClick={() => setActiveTab('share')}
+            className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'share'
+                ? 'bg-surface text-text-primary shadow-sm border border-border-light'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            <Cloud size={13} className="text-ok" />
+            <span>Share My Session</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('join')}
+            className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'join'
+                ? 'bg-surface text-text-primary shadow-sm border border-border-light'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            <ArrowRight size={13} className="text-accent" />
+            <span>Join Friend's Swarm</span>
+          </button>
         </div>
 
-        {/* Teammate Permissions */}
-        <div className="space-y-2 mb-5">
-          <div className="flex items-center justify-between p-2.5 bg-bgside rounded-lg border border-border text-xs">
-            <span className="flex items-center gap-2 text-text-primary">
-              <Shield size={14} className="text-ok" />
-              <span>Independent Git Worktrees</span>
-            </span>
-            <span className="text-[10px] text-ok font-mono font-medium">ISOLATED</span>
-          </div>
-          <div className="flex items-center justify-between p-2.5 bg-bgside rounded-lg border border-border text-xs">
-            <span className="flex items-center gap-2 text-text-primary">
-              <Globe size={14} className="text-accent" />
-              <span>Coordination Layer</span>
-            </span>
-            <span className="text-[10px] text-text-muted font-mono">brain.vendra.uz:4000</span>
-          </div>
-        </div>
+        {activeTab === 'share' ? (
+          <div className="space-y-4">
+            <p className="text-xs text-text-secondary leading-relaxed">
+              Share this session with teammates. All friends link to the <strong>same GitHub repository</strong>, and their local agents (OpenCode, Claude Code, Codex) run in parallel in separate Git worktrees with 5-second live sync.
+            </p>
 
-        <div className="flex justify-end gap-2">
+            {/* Linked Central GitHub Repo */}
+            <div className="p-3 bg-bgdeep rounded-xl border border-border">
+              <label className="block text-[10px] text-text-muted font-semibold uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <Github size={12} className="text-text-primary" />
+                Linked GitHub Repository (All Friends Work on This Repo)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={githubRepoUrl}
+                  onChange={(e) => setGithubRepoUrl(e.target.value)}
+                  placeholder="https://github.com/username/repository"
+                  className="vc-input text-xs font-mono py-1.5 h-8 flex-1"
+                />
+              </div>
+              <span className="text-[10px] text-text-muted mt-1 block">
+                Teammates who join this session will automatically clone and sync to this repo.
+              </span>
+            </div>
+
+            {/* Cloudflare Session Link Box */}
+            <div className="p-3 bg-bgdeep rounded-xl border border-border">
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[10px] text-text-muted font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                  <Globe size={12} className="text-ok" />
+                  Cloudflare Live Session URL
+                </label>
+                <span className="text-[9.5px] text-ok bg-ok/10 border border-ok/30 px-1.5 py-0.2 rounded font-mono">
+                  Cloudflare Edge Proxied
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={fullSessionUrl}
+                  className="w-full bg-surface/50 border border-border px-2.5 py-1.5 rounded-lg text-[11px] font-mono text-accent outline-none truncate"
+                />
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="btn btn-primary h-8 px-3 text-xs shrink-0 gap-1.5 shadow-md"
+                >
+                  {copied ? <Check size={13} /> : <Copy size={13} />}
+                  <span>{copied ? 'Copied' : 'Copy Link'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Subdomain & Git Info Badges */}
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-2.5 bg-bgside rounded-xl border border-border flex items-center gap-2">
+                <Cloud size={14} className="text-ok shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-[10px] text-text-muted font-semibold uppercase">Cloudflare Edge</div>
+                  <div className="text-[11px] font-mono text-text-primary truncate">brain.vendra.uz</div>
+                </div>
+              </div>
+              <div className="p-2.5 bg-bgside rounded-xl border border-border flex items-center gap-2">
+                <Shield size={14} className="text-accent shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-[10px] text-text-muted font-semibold uppercase">Git Worktree Sync</div>
+                  <div className="text-[11px] font-mono text-text-primary truncate">Zero Conflicts</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* Join Friend's Session */
+          <div className="space-y-4">
+            <p className="text-xs text-text-secondary leading-relaxed">
+              Paste your friend's <strong>brain.vendra.uz</strong> invite link below. VendraCode will automatically connect to their session, clone the shared GitHub repository, and attach your local agents to the swarm.
+            </p>
+
+            <div className="p-3 bg-bgdeep rounded-xl border border-border">
+              <label className="block text-[10px] text-text-muted font-semibold uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <Globe size={12} className="text-accent" />
+                Friend's Session URL or GitHub Repo
+              </label>
+              <input
+                type="text"
+                value={joinUrlInput}
+                onChange={(e) => setJoinUrlInput(e.target.value)}
+                placeholder="https://brain.vendra.uz/session/lobby-join-race?repo=https://github.com/..."
+                className="vc-input text-xs font-mono py-1.5 h-9 w-full mb-3"
+              />
+
+              <button
+                type="button"
+                onClick={handleJoinFriendSession}
+                disabled={isCloning || !joinUrlInput.trim()}
+                className="btn btn-primary w-full text-xs h-8 justify-center gap-2 shadow-md"
+              >
+                {isCloning ? (
+                  <>
+                    <RefreshCw size={13} className="animate-spin text-ok" />
+                    <span>Cloning & Synchronizing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={13} />
+                    <span>Clone Shared Repo & Join Swarm</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {cloneStatus && (
+              <div className="p-2.5 bg-bgdeep rounded-lg border border-border text-xs font-mono text-ok">
+                {cloneStatus}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5 pt-3 border-t border-border">
           <button
             type="button"
             onClick={onClose}
-            className="btn btn-ghost text-xs h-8"
+            className="btn btn-ghost text-xs h-7"
           >
-            Done
+            Close
           </button>
         </div>
       </motion.div>

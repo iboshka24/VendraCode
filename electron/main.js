@@ -549,8 +549,9 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
   const home = process.env.HOME || '';
 
   try {
-    // 1. OpenCode provider models
-    if (providerType === 'opencode' || !providerType) {
+    // 1. OpenCode & OpenRouter Free Models Catalog
+    if (providerType === 'opencode' || providerType === 'openrouter' || !providerType) {
+      // User's configured opencode.json models
       const configPath = path.join(home, '.config', 'opencode', 'opencode.json');
       if (fs.existsSync(configPath)) {
         try {
@@ -563,7 +564,7 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
                     id: `${pName}/${mId}`,
                     name: `${mId} · ${pName}`,
                     provider: 'opencode',
-                    source: 'opencode.json'
+                    source: 'opencode.json (Local Config)'
                   });
                 }
               }
@@ -573,6 +574,42 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
           console.warn('OpenCode config parse warning:', e);
         }
       }
+
+      // Live OpenRouter Free Models (:free filter)
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3500);
+        const orRes = await fetch('https://openrouter.ai/api/v1/models', { signal: controller.signal });
+        clearTimeout(timeout);
+        if (orRes.ok) {
+          const orData = await orRes.json();
+          const freeList = (orData.data || []).filter((m) => m.id.endsWith(':free') || (m.pricing && m.pricing.prompt == 0));
+          freeList.forEach((m) => {
+            models.push({
+              id: m.id,
+              name: `${m.name || m.id} (Free)`,
+              provider: 'openrouter-free',
+              source: 'OpenCode Free Tier'
+            });
+          });
+        }
+      } catch (err) {
+        console.warn('OpenRouter free models query fallback:', err.message);
+      }
+
+      // Default verified OpenCode free models
+      const verifiedFree = [
+        { id: 'openrouter/auto', name: 'OpenRouter Auto (Free Router)', provider: 'opencode', source: 'OpenCode Free' },
+        { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (Free)', provider: 'google', source: 'OpenCode Free' },
+        { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B Instruct (Free)', provider: 'meta', source: 'OpenCode Free' },
+        { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 Reasoning (Free)', provider: 'deepseek', source: 'OpenCode Free' },
+        { id: 'deepseek/deepseek-chat:free', name: 'DeepSeek V3 Chat (Free)', provider: 'deepseek', source: 'OpenCode Free' },
+        { id: 'qwen/qwen-2.5-coder-32b-instruct:free', name: 'Qwen 2.5 Coder 32B (Free)', provider: 'qwen', source: 'OpenCode Free' },
+        { id: 'mistralai/mistral-small-24b-instruct-2501:free', name: 'Mistral Small 24B (Free)', provider: 'mistral', source: 'OpenCode Free' },
+        { id: 'nvidia/nemotron-3.5-lightning:free', name: 'NVIDIA Nemotron 3.5 (Free)', provider: 'nvidia', source: 'OpenCode Free' },
+        { id: 'liquid/lfm-2.5-2.6b:free', name: 'Liquid LFM 2.6B (Free)', provider: 'liquid', source: 'OpenCode Free' },
+      ];
+      verifiedFree.forEach((m) => models.push(m));
     }
 
     // 2. Ollama local models
@@ -632,13 +669,32 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
       }
     }
 
+    if (providerType === 'nvidia' && (!apiKey || models.length === 0)) {
+      models.push(
+        { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', provider: 'nvidia', source: 'NVIDIA Catalog' },
+        { id: 'nvidia/llama-3.1-nemotron-70b-instruct', name: 'Nemotron 70B Instruct', provider: 'nvidia', source: 'NVIDIA Catalog' },
+        { id: 'deepseek-ai/deepseek-r1', name: 'DeepSeek R1', provider: 'nvidia', source: 'NVIDIA Catalog' },
+        { id: 'meta/llama-3.1-405b-instruct', name: 'Llama 3.1 405B Instruct', provider: 'nvidia', source: 'NVIDIA Catalog' },
+        { id: 'mistralai/mistral-large-2407', name: 'Mistral Large 2', provider: 'nvidia', source: 'NVIDIA Catalog' }
+      );
+    }
+
+    if (providerType === 'openai' && (!apiKey || models.length === 0)) {
+      models.push(
+        { id: 'gpt-4o', name: 'GPT-4o (Omni)', provider: 'openai', source: 'OpenAI Catalog' },
+        { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast)', provider: 'openai', source: 'OpenAI Catalog' },
+        { id: 'o1', name: 'o1 (Reasoning)', provider: 'openai', source: 'OpenAI Catalog' },
+        { id: 'o3-mini', name: 'o3-mini (Reasoning Fast)', provider: 'openai', source: 'OpenAI Catalog' }
+      );
+    }
+
     // 4. Anthropic
     if (providerType === 'anthropic' || (baseUrl && baseUrl.includes('anthropic'))) {
       models.push(
-        { id: 'claude-3-7-sonnet-latest', name: 'Claude 3.7 Sonnet (Hybrid Reasoning)', provider: 'anthropic' },
-        { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet v2', provider: 'anthropic' },
-        { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku (Fast)', provider: 'anthropic' },
-        { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', provider: 'anthropic' }
+        { id: 'claude-3-7-sonnet-latest', name: 'Claude 3.7 Sonnet (Hybrid Reasoning)', provider: 'anthropic', source: 'Anthropic Catalog' },
+        { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet v2', provider: 'anthropic', source: 'Anthropic Catalog' },
+        { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku (Fast)', provider: 'anthropic', source: 'Anthropic Catalog' },
+        { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', provider: 'anthropic', source: 'Anthropic Catalog' }
       );
     }
   } catch (err) {

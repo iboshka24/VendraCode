@@ -4,6 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import { X, Circle, FolderOpen, Compass, Sparkles, Play, Users, GitCommit, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LiveAgentStream } from './LiveAgentStream';
+import { VendraLogo } from './VendraLogo';
 
 export function CodeEditor() {
   const {
@@ -103,10 +104,12 @@ export function CodeEditor() {
           animate={{ opacity: 1, y: 0 }}
           className="text-center max-w-sm px-6"
         >
-          <div className="w-12 h-12 rounded-2xl bg-chip border border-border-light flex items-center justify-center mx-auto mb-4 text-text-primary shadow-lg">
-            <span className="font-bold text-lg text-accent">V</span>
+          <div className="flex justify-center mx-auto mb-4 drop-shadow-[0_0_24px_rgba(124,58,237,0.3)]">
+            <VendraLogo size={52} />
           </div>
-          <h2 className="text-base font-bold text-text-primary mb-1 tracking-tight">VendraCode IDE</h2>
+          <h2 className="text-base font-bold text-text-primary mb-1 tracking-tight font-mono">
+            Vendra<strong className="text-ok font-black">Code</strong> IDE
+          </h2>
           <p className="text-text-muted text-xs leading-relaxed mb-6">
             Multiplayer AI-Native Development Environment with The Shared Brain & Hermes agent skills.
           </p>
