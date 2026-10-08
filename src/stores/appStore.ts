@@ -84,6 +84,11 @@ interface AppState {
   isSearchOpen: boolean;
   toggleSearch: () => void;
 
+  // Share Modal
+  isShareOpen: boolean;
+  toggleShare: () => void;
+  setShareOpen: (open: boolean) => void;
+
   // Local CLIs & Brain Coordination
   localCLIs: LocalCLIDetected[];
   setLocalCLIs: (clis: LocalCLIDetected[]) => void;
@@ -348,6 +353,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSearchQuery: (q) => set({ searchQuery: q }),
   isSearchOpen: false,
   toggleSearch: () => set((s) => ({ isSearchOpen: !s.isSearchOpen })),
+
+  // Share Modal
+  isShareOpen: false,
+  toggleShare: () => set((s) => ({ isShareOpen: !s.isShareOpen })),
+  setShareOpen: (open) => set({ isShareOpen: open }),
 
   // Local CLIs & Brain Coordination
   localCLIs: [],

@@ -1,16 +1,18 @@
-import { useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { useAppStore } from '@/stores/appStore';
-import { X, Circle, FolderOpen, Compass, Sparkles } from 'lucide-react';
+import { X, Circle, FolderOpen, Compass, Sparkles, Play, Users, GitCommit, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { LiveAgentStream } from './LiveAgentStream';
 
 export function CodeEditor() {
   const {
     openTabs, activeTabId, setActiveTab, closeTab,
     updateTabContent, markTabClean, workspacePath, setWorkspacePath,
-    setFileTree, setActiveView, toggleChat, settings
+    setFileTree, setActiveView, toggleChat, activeLocks, settings
   } = useAppStore();
   const editorRef = useRef<any>(null);
+  const [isLiveStreaming, setIsLiveStreaming] = useState(false);
 
   const activeTab = openTabs.find((t) => t.id === activeTabId);
 
@@ -46,6 +48,7 @@ export function CodeEditor() {
       const path = await window.vendraAPI.dialog.openDirectory();
       if (path) {
         setWorkspacePath(path);
+        localStorage.setItem('vendracode-workspace', path);
         const entries = await window.vendraAPI.fs.readDir(path);
         setFileTree(entries);
       }
@@ -72,6 +75,25 @@ export function CodeEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [activeTab, markTabClean]);
 
+  // If in live stream view, show the full multi-agent collaborative typing screen
+  if (isLiveStreaming) {
+    return (
+      <div className="flex-1 min-h-0 bg-background p-3">
+        <LiveAgentStream
+          filename={activeTab?.name || 'src/auth/authenticate.ts'}
+          onApplyToFile={(code) => {
+            if (activeTabId) {
+              updateTabContent(activeTabId, code);
+              setIsLiveStreaming(false);
+            }
+          }}
+          onClose={() => setIsLiveStreaming(false)}
+        />
+      </div>
+    );
+  }
+
+  // Welcome Screen when no files open
   if (openTabs.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center bg-background select-none">
@@ -89,10 +111,20 @@ export function CodeEditor() {
           </p>
 
           <div className="flex flex-col gap-2 items-center">
+            {/* Live Streaming Animation Launcher */}
+            <button
+              type="button"
+              onClick={() => setIsLiveStreaming(true)}
+              className="btn btn-primary w-52 text-xs justify-center gap-2 shadow-lg"
+            >
+              <Play size={13} className="text-popfg fill-current" />
+              <span>Watch Live Agent Typing</span>
+            </button>
+
             <button
               type="button"
               onClick={handleOpenFolder}
-              className="btn btn-primary w-48 text-xs justify-center"
+              className="btn btn-ghost w-52 text-xs justify-center"
             >
               <FolderOpen size={14} />
               <span>Open Repository</span>
@@ -100,7 +132,7 @@ export function CodeEditor() {
             <button
               type="button"
               onClick={() => setActiveView('mission-control')}
-              className="btn btn-ghost w-48 text-xs justify-center"
+              className="btn btn-ghost w-52 text-xs justify-center"
             >
               <Compass size={14} />
               <span>Mission Control</span>
@@ -108,7 +140,7 @@ export function CodeEditor() {
             <button
               type="button"
               onClick={toggleChat}
-              className="btn btn-ghost w-48 text-xs justify-center"
+              className="btn btn-ghost w-52 text-xs justify-center"
             >
               <Sparkles size={14} className="text-accent" />
               <span>AI Agent Prompt</span>
@@ -127,40 +159,56 @@ export function CodeEditor() {
 
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-background">
-      {/* Tab Bar */}
-      <div className="flex h-8 bg-bgtitle border-b border-border overflow-x-auto select-none">
-        <AnimatePresence>
-          {openTabs.map((tab) => {
-            const isActive = tab.id === activeTabId;
-            return (
-              <motion.div
-                key={tab.id}
-                initial={{ opacity: 0, width: 0 }}
-                animate={{ opacity: 1, width: 'auto' }}
-                exit={{ opacity: 0, width: 0 }}
-                className={`flex items-center gap-2 px-3 text-xs cursor-pointer border-r border-border
-                  shrink-0 min-w-0 group transition-all font-mono
-                  ${isActive
-                    ? 'bg-background text-text-primary border-t-2 border-t-pop font-medium'
-                    : 'bg-bgtitle text-text-secondary hover:bg-surface-hover hover:text-text-primary'
-                  }`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="truncate max-w-[130px]">{tab.name}</span>
-                {tab.isDirty && (
-                  <Circle size={6} className="text-warning fill-warning shrink-0" />
-                )}
-                <button
-                  type="button"
-                  className="opacity-0 group-hover:opacity-100 hover:bg-chip rounded p-0.5 transition-opacity shrink-0"
-                  onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+      {/* Tab Bar with Live Stream Launcher */}
+      <div className="flex items-center justify-between h-8 bg-bgtitle border-b border-border overflow-x-auto select-none px-1">
+        <div className="flex items-center overflow-x-auto min-w-0">
+          <AnimatePresence>
+            {openTabs.map((tab) => {
+              const isActive = tab.id === activeTabId;
+              return (
+                <motion.div
+                  key={tab.id}
+                  initial={{ opacity: 0, width: 0 }}
+                  animate={{ opacity: 1, width: 'auto' }}
+                  exit={{ opacity: 0, width: 0 }}
+                  className={`flex items-center gap-2 px-3 h-8 text-xs cursor-pointer border-r border-border
+                    shrink-0 min-w-0 group transition-all font-mono
+                    ${isActive
+                      ? 'bg-background text-text-primary border-t-2 border-t-pop font-medium'
+                      : 'bg-bgtitle text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                    }`}
+                  onClick={() => setActiveTab(tab.id)}
                 >
-                  <X size={11} />
-                </button>
-              </motion.div>
-            );
-          })}
-        </AnimatePresence>
+                  <span className="truncate max-w-[130px]">{tab.name}</span>
+                  {tab.isDirty && (
+                    <Circle size={6} className="text-warning fill-warning shrink-0" />
+                  )}
+                  <button
+                    type="button"
+                    className="opacity-0 group-hover:opacity-100 hover:bg-chip rounded p-0.5 transition-opacity shrink-0"
+                    onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                  >
+                    <X size={11} />
+                  </button>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        </div>
+
+        {/* Live Multi-Agent Co-Editing Button */}
+        <div className="flex items-center gap-2 shrink-0 pr-2">
+          <button
+            type="button"
+            onClick={() => setIsLiveStreaming(true)}
+            className="btn btn-ghost h-6 px-2 text-[11px] font-sans flex items-center gap-1.5 border border-border"
+            title="Open Amoeba live collaborative typing display"
+          >
+            <span className="dotpulse" />
+            <Play size={10} className="fill-current text-ok" />
+            <span>Live Typing Stream</span>
+          </button>
+        </div>
       </div>
 
       {/* Monaco Editor */}

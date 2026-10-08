@@ -7,7 +7,7 @@ import {
 import { motion } from 'framer-motion';
 
 export function TitleBar() {
-  const { activeView, setActiveView, toggleChat, isChatOpen, toggleTerminal, toggleSearch, workspacePath } = useAppStore();
+  const { activeView, setActiveView, toggleChat, isChatOpen, toggleTerminal, toggleSearch, toggleShare, workspacePath } = useAppStore();
 
   const repoName = workspacePath ? workspacePath.split('/').pop() : 'abyssal-drift';
 
@@ -131,7 +131,7 @@ export function TitleBar() {
         <button
           type="button"
           className="btn btn-primary h-7 px-3 text-xs ml-1"
-          onClick={() => alert('Shared Session link copied to clipboard! (Live P2P sync via Brain)')}
+          onClick={toggleShare}
         >
           <Users size={12} />
           <span>Share</span>

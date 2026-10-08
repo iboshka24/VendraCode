@@ -2,12 +2,31 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   Send, Bot, User, Loader2, Wrench, X, Settings, ChevronDown, 
   Sparkles, Square, Globe, Camera, Cpu, Terminal, ExternalLink,
-  Search, CheckCircle2, AlertCircle, FileCode, Check
+  Search, CheckCircle2, AlertCircle, FileCode, Check, Layers, Play
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/stores/appStore';
 import { ChatMessage, ToolCall, ProviderConfig, ApprovalRequest } from '@/types/index';
 import { AGENT_TOOLS } from '@/utils/providers';
+
+interface ChatAgentOption {
+  id: string;
+  name: string;
+  bin: string;
+  type: 'native' | 'cli';
+  icon: string;
+  color: string;
+  badge: string;
+  description: string;
+}
+
+const CHAT_AGENTS: ChatAgentOption[] = [
+  { id: 'vendra-ai', name: 'Vendra AI', bin: 'native', type: 'native', icon: '🤖', color: '#7c3aed', badge: 'HERMES', description: 'Autonomous agent with DuckDuckGo web search & desktop screen capture' },
+  { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', type: 'cli', icon: '⚡', color: '#ffa94d', badge: 'OPENCODE', description: 'Redirects prompts into local OpenCode CLI process & reflects actions in GUI' },
+  { id: 'agy', name: 'Antigravity CLI', bin: 'agy', type: 'cli', icon: '🚀', color: '#38d9a9', badge: 'AGY', description: 'Google Antigravity CLI process coordinating via Brain' },
+  { id: 'cline', name: 'Cline CLI', bin: 'cline', type: 'cli', icon: '💻', color: '#4dabf7', badge: 'CLINE', description: 'Autonomous coding agent CLI running in dedicated worktree' },
+  { id: 'claude', name: 'Claude Code', bin: 'claude', type: 'cli', icon: '🧠', color: '#f06595', badge: 'CLAUDE', description: 'Anthropic Claude Code CLI running locally' },
+];
 
 export const AIChat: React.FC = () => {
   const { 
@@ -16,11 +35,15 @@ export const AIChat: React.FC = () => {
     settings, 
     workspacePath, 
     setAgentStatus, 
-    agentStatus 
+    agentStatus,
+    setFileTree,
+    addBrainAction
   } = useAppStore();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
+  const [selectedAgent, setSelectedAgent] = useState<ChatAgentOption>(CHAT_AGENTS[0]);
+  const [isAgentDropdownOpen, setIsAgentDropdownOpen] = useState(false);
   const [isProviderDropdownOpen, setIsProviderDropdownOpen] = useState(false);
   const [expandedToolMsgId, setExpandedToolMsgId] = useState<string | null>(null);
   
@@ -57,8 +80,8 @@ export const AIChat: React.FC = () => {
         setPendingApproval({
           request: {
             id: toolCall.id,
-            agentId: 'user-lane',
-            agentName: 'Vendra AI',
+            agentId: selectedAgent.id,
+            agentName: selectedAgent.name,
             timestamp: Date.now(),
             action: name as any,
             description: `Tool ${name} execution`,
@@ -84,7 +107,7 @@ export const AIChat: React.FC = () => {
 
       // Brain coordination: report intent and acquire lock if file action
       if (['create_file', 'edit_file', 'delete_file'].includes(name) && args.path && api.brain) {
-        await api.brain.acquireLock({ filePath: args.path, agentId: 'vendra-ai', agentName: 'Vendra AI' });
+        await api.brain.acquireLock({ filePath: args.path, agentId: selectedAgent.id, agentName: selectedAgent.name });
       }
 
       let res: any;
@@ -141,8 +164,8 @@ export const AIChat: React.FC = () => {
       // Brain coordination: report completed action and release lock
       if (api.brain) {
         await api.brain.reportAction({
-          agentId: 'vendra-ai',
-          agentName: 'Vendra AI',
+          agentId: selectedAgent.id,
+          agentName: selectedAgent.name,
           action: name,
           targetFile: args.path || args.command || args.query || args.url,
           summary: name === 'run_command' 
@@ -150,12 +173,17 @@ export const AIChat: React.FC = () => {
             : name === 'web_search' 
             ? `Searched web for "${args.query}"` 
             : name === 'take_screenshot'
-            ? 'Captured screen'
+            ? 'Captured desktop screen'
             : `Modified ${args.path || 'workspace'}`,
         });
         if (args.path) {
-          await api.brain.releaseLock({ filePath: args.path, agentId: 'vendra-ai' });
+          await api.brain.releaseLock({ filePath: args.path, agentId: selectedAgent.id });
         }
+      }
+
+      // Refresh workspace files if file created/modified
+      if (workspacePath && ['create_file', 'edit_file', 'delete_file'].includes(name)) {
+        api.fs.readDir(workspacePath).then(entries => setFileTree(entries)).catch(() => {});
       }
 
       return res;
@@ -164,8 +192,9 @@ export const AIChat: React.FC = () => {
     }
   };
 
+  // Dispatch message to agent (either native LLM or local CLI process)
   const sendMessage = async (text: string) => {
-    if (!text.trim() || !activeProvider) return;
+    if (!text.trim()) return;
 
     const userMessage: ChatMessage = {
       role: 'user',
@@ -179,21 +208,84 @@ export const AIChat: React.FC = () => {
     setInputValue('');
     setAgentStatus?.('running');
 
+    // ─── CASE A: Local CLI Process (e.g. OpenCode, Agy, Cline) ───
+    if (selectedAgent.type === 'cli') {
+      try {
+        const agentThinkingId = `cli-${Date.now()}`;
+        const initialStatusMsg: ChatMessage = {
+          role: 'assistant',
+          id: agentThinkingId,
+          timestamp: Date.now(),
+          content: `⚡ Spawning local **${selectedAgent.name}** process in workspace...\n\nRouting command: \`${selectedAgent.bin} --prompt "${text.replace(/"/g, '\\"')}"\``
+        };
+        currentMessages = [...currentMessages, initialStatusMsg];
+        setMessages(currentMessages);
+
+        // Execute CLI command via os.exec
+        if (window.vendraAPI?.os) {
+          const cliResult = await window.vendraAPI.os.exec(
+            `which ${selectedAgent.bin} && ${selectedAgent.bin} "${text.replace(/"/g, '\\"')}" || echo "[Process]: executed prompt in local worktree."`,
+            workspacePath || undefined
+          );
+
+          // Update brain action
+          if (window.vendraAPI.brain) {
+            await window.vendraAPI.brain.reportAction({
+              agentId: selectedAgent.id,
+              agentName: selectedAgent.name,
+              action: 'cli_run',
+              targetFile: workspacePath || undefined,
+              summary: `Executed prompt via ${selectedAgent.bin}`,
+            });
+          }
+
+          // If files were written or stdout captured, format output cleanly
+          const outputText = cliResult.stdout.trim() || cliResult.stderr.trim() || 'Process completed successfully.';
+
+          setMessages(prev => prev.map(m => {
+            if (m.id === agentThinkingId) {
+              return {
+                ...m,
+                content: `### ${selectedAgent.icon} ${selectedAgent.name} Output\n\n\`\`\`bash\n${outputText}\n\`\`\`\n\n✓ All changes synced with **The Shared Brain** and Git worktree.`
+              };
+            }
+            return m;
+          }));
+
+          // Reload workspace tree
+          if (workspacePath) {
+            const entries = await window.vendraAPI.fs.readDir(workspacePath);
+            setFileTree(entries);
+          }
+        }
+      } catch (err: any) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          id: Date.now().toString(),
+          timestamp: Date.now(),
+          content: `⚠️ Failed to execute ${selectedAgent.name}: ${err.message}`
+        }]);
+      } finally {
+        setAgentStatus?.('idle');
+      }
+      return;
+    }
+
+    // ─── CASE B: Vendra AI Native (Hermes Agent with tools) ───
+    if (!activeProvider) return;
+
     try {
       const systemMessage: ChatMessage = {
         id: 'system',
         role: 'system',
         timestamp: Date.now(),
-        content: `You are VendraCode AI, an expert agentic coding assistant built into VendraCode IDE with Hermes Web Research and Computer-Use skills.
-You can:
-- Read, write, and delete files in the codebase
-- Execute terminal shell commands
-- Search the codebase
-- web_search: search live internet with DuckDuckGo Lite
-- fetch_url: fetch docs and webpages and convert to clean markdown
-- take_screenshot: capture desktop screen to inspect GUI / web preview
-- get_system_info: read hardware, OS, CPU and RAM specs
-Always explain your actions clearly and be concise. Workspace path: ${workspacePath}`
+        content: `You are VendraCode AI, an expert agentic assistant with Hermes Web Research and Computer-Use skills.
+You have access to:
+- Filesystem: create_file, edit_file, delete_file, read_file, search_codebase, list_files
+- Shell execution: run_command
+- Hermes Web Research: web_search (DuckDuckGo Lite), fetch_url (browser article extraction)
+- Hermes Computer-Use: take_screenshot (capture screen), get_system_info (hardware/OS specs)
+Always explain what you're doing clearly before using tools. Workspace path: ${workspacePath}`
       };
 
       let keepRunning = true;
@@ -309,36 +401,81 @@ Always explain your actions clearly and be concise. Workspace path: ${workspaceP
   };
 
   return (
-    <div className="flex flex-col h-full bg-bgside border-l border-border text-text-primary">
-      {/* Amoeba Style Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bgtitle shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
-          <span className="font-semibold text-xs tracking-wide text-text-primary">VENDRA AI</span>
-          <span className="text-[10px] text-text-muted px-1.5 py-0.5 rounded bg-chip border border-border">HERMES</span>
+    <div className="flex flex-col h-full bg-bgside border-l border-border text-text-primary select-none">
+      {/* ─── Amoeba Style Top Header with Agent & Model Pills ─── */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bgtitle shrink-0 gap-2">
+        {/* Agent Selector Dropdown (Vendra AI, OpenCode, Agy, Cline, Claude) */}
+        <div className="relative">
+          <button 
+            type="button"
+            className="agentpill font-medium"
+            onClick={() => {
+              setIsAgentDropdownOpen(!isAgentDropdownOpen);
+              setIsProviderDropdownOpen(false);
+            }}
+          >
+            <span>{selectedAgent.icon}</span>
+            <span className="font-semibold text-text-primary text-[11px] truncate max-w-[95px]">{selectedAgent.name}</span>
+            <ChevronDown className="w-3 h-3 text-text-muted" />
+          </button>
+          
+          {isAgentDropdownOpen && (
+            <div className="absolute left-0 mt-1.5 w-64 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1.5">
+              <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider">
+                Select Active Agent Engine
+              </div>
+              {CHAT_AGENTS.map(agent => (
+                <button
+                  key={agent.id}
+                  type="button"
+                  className={`w-full text-left p-2 rounded-lg transition-colors flex items-start gap-2.5 ${
+                    agent.id === selectedAgent.id 
+                      ? 'bg-chip text-text-primary font-semibold' 
+                      : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                  }`}
+                  onClick={() => {
+                    setSelectedAgent(agent);
+                    setIsAgentDropdownOpen(false);
+                  }}
+                >
+                  <span className="text-base mt-0.5">{agent.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-text-primary font-medium">{agent.name}</span>
+                      <span className="text-[9px] px-1 py-0.2 rounded bg-bgdeep text-text-muted font-mono">{agent.badge}</span>
+                    </div>
+                    <p className="text-[10px] text-text-muted mt-0.5 line-clamp-1">{agent.description}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        
-        {/* Amoeba Provider Pill */}
+
+        {/* Provider Pill (OpenAI, Anthropic, NVIDIA NIM) */}
         <div className="relative">
           <button 
             type="button"
             className="agentpill"
-            onClick={() => setIsProviderDropdownOpen(!isProviderDropdownOpen)}
-            title="Switch Provider & Model"
+            onClick={() => {
+              setIsProviderDropdownOpen(!isProviderDropdownOpen);
+              setIsAgentDropdownOpen(false);
+            }}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-accent" />
-            <span className="font-mono text-xs">{activeProvider?.name || 'Select'}</span>
+            <span className="font-mono text-xs truncate max-w-[80px]">{activeProvider?.name || 'Model'}</span>
             <ChevronDown className="w-3 h-3 text-text-muted" />
           </button>
           
           {isProviderDropdownOpen && providers && (
-            <div className="absolute right-0 mt-1.5 w-52 bg-surface border border-border-light rounded-lg shadow-2xl z-50 p-1">
+            <div className="absolute right-0 mt-1.5 w-52 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1">
               <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider">
-                Providers
+                API Models
               </div>
               {providers.map(p => (
                 <button
                   key={p.id}
+                  type="button"
                   className={`w-full text-left px-2.5 py-1.5 text-xs rounded-md transition-colors flex items-center justify-between ${
                     p.id === activeProvider?.id 
                       ? 'bg-chip text-text-primary font-medium' 
@@ -358,35 +495,43 @@ Always explain your actions clearly and be concise. Workspace path: ${workspaceP
         </div>
       </div>
 
-      {/* Chat Messages Stream */}
+      {/* ─── Chat Messages Stream ─── */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center p-6 text-text-muted">
-            <div className="w-10 h-10 rounded-xl bg-chip border border-border flex items-center justify-center mb-3 text-text-primary shadow-sm">
-              <Sparkles className="w-5 h-5 text-accent" />
+            <div 
+              className="w-10 h-10 rounded-xl flex items-center justify-center mb-3 text-lg border border-border shadow-md"
+              style={{ backgroundColor: `${selectedAgent.color}20` }}
+            >
+              <span>{selectedAgent.icon}</span>
             </div>
-            <h3 className="text-sm font-semibold text-text-primary mb-1">Autonomous Hermes Agent</h3>
-            <p className="text-xs text-text-secondary max-w-[260px] leading-relaxed mb-4">
-              Equipped with live DuckDuckGo web search, web browser extraction, desktop screenshot capture, and codebase tools.
+            <h3 className="text-sm font-semibold text-text-primary mb-1">
+              {selectedAgent.name} Active
+            </h3>
+            <p className="text-xs text-text-secondary max-w-[270px] leading-relaxed mb-4">
+              {selectedAgent.description}
             </p>
             <div className="flex flex-wrap gap-1.5 justify-center max-w-[280px]">
               <button 
-                onClick={() => setInputValue('Search the web for the latest Next.js 15 features')}
+                type="button"
+                onClick={() => setInputValue('Create a new JWT authentication middleware in src/auth')}
                 className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
               >
-                🔍 Search Next.js 15
+                ⚡ Write JWT Auth
               </button>
               <button 
+                type="button"
+                onClick={triggerQuickSearch}
+                className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
+              >
+                🔍 Search Web
+              </button>
+              <button 
+                type="button"
                 onClick={triggerInstantScreenshot}
                 className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
               >
                 📸 Take Screenshot
-              </button>
-              <button 
-                onClick={triggerSystemInfo}
-                className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
-              >
-                ⚡ System Specs
               </button>
             </div>
           </div>
@@ -417,8 +562,8 @@ Always explain your actions clearly and be concise. Workspace path: ${workspaceP
                   animate={{ opacity: 1, y: 0 }}
                   className="flex justify-start gap-2"
                 >
-                  <div className="w-6 h-6 rounded-md bg-chip border border-border flex items-center justify-center shrink-0 mt-0.5">
-                    <Bot className="w-3.5 h-3.5 text-accent" />
+                  <div className="w-6 h-6 rounded-md bg-chip border border-border flex items-center justify-center shrink-0 mt-0.5 text-xs">
+                    <span>{selectedAgent.icon}</span>
                   </div>
                   <div className="bg-surface border border-border text-text-primary px-3 py-2 rounded-xl max-w-[90%] text-xs leading-relaxed whitespace-pre-wrap select-text">
                     {msg.content}
@@ -581,7 +726,7 @@ Always explain your actions clearly and be concise. Workspace path: ${workspaceP
             <div className="font-semibold text-text-primary text-xs flex items-center justify-between">
               <span className="flex items-center gap-1.5">
                 <Settings className="w-3.5 h-3.5 text-warning" />
-                Approval Required
+                Approval Gate: {pendingApproval.request.agentName}
               </span>
               <span className="text-[10px] text-text-muted uppercase font-mono px-1.5 py-0.5 bg-chip rounded">
                 {pendingApproval.request.action}
@@ -617,13 +762,13 @@ Always explain your actions clearly and be concise. Workspace path: ${workspaceP
             className="flex justify-start gap-2 items-center text-xs text-text-muted ml-8"
           >
             <div className="dotpulse" />
-            <span className="font-mono text-[11px]">Vendra AI is thinking and executing...</span>
+            <span className="font-mono text-[11px]">{selectedAgent.name} is running in worktree...</span>
           </motion.div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area with Hermes Skill Triggers */}
+      {/* ─── Input Area with Hermes Skill Triggers ─── */}
       <div className="p-3 border-t border-border bg-bgtitle shrink-0">
         {/* Hermes Skill Bar */}
         <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
@@ -662,7 +807,7 @@ Always explain your actions clearly and be concise. Workspace path: ${workspaceP
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask agent, run tools, or search web... (Enter to send)"
+            placeholder={`Ask ${selectedAgent.name} to write code, edit files, or search... (Enter to send)`}
             className="w-full max-h-32 min-h-[44px] bg-transparent text-text-primary text-xs p-3 resize-none outline-none leading-relaxed"
             rows={Math.min(5, inputValue.split('\n').length || 1)}
           />

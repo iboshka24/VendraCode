@@ -3,6 +3,8 @@ import { TitleBar } from '@/components/TitleBar';
 import { StatusBar } from '@/components/StatusBar';
 import { CodeEditor } from '@/components/CodeEditor';
 import { TerminalPanel } from '@/components/Terminal';
+import { SearchModal } from '@/components/SearchModal';
+import { ShareSessionModal } from '@/components/ShareSessionModal';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, lazy, Suspense } from 'react';
 
@@ -28,11 +30,28 @@ function App() {
     activeView,
     isChatOpen,
     workspacePath,
+    setWorkspacePath,
     setFileTree,
     setLocalCLIs,
     setActiveLocks,
     addBrainAction,
+    isShareOpen,
+    toggleShare,
   } = useAppStore();
+
+  // Auto-load last workspace or default workspace on start so Explorer isn't blank
+  useEffect(() => {
+    if (!window.vendraAPI) return;
+    const last = localStorage.getItem('vendracode-workspace') || '/home/ibrohim/VendraCode';
+    if (!workspacePath && last) {
+      setWorkspacePath(last);
+      window.vendraAPI.fs.readDir(last).then((entries) => {
+        if (entries && entries.length > 0) {
+          setFileTree(entries);
+        }
+      }).catch(() => {});
+    }
+  }, [workspacePath, setWorkspacePath, setFileTree]);
 
   // Initialize Local CLI detection & Brain coordination listeners
   useEffect(() => {
@@ -93,7 +112,7 @@ function App() {
               className="flex-1 flex min-w-0 min-h-0"
             >
               {/* File Explorer Sidebar */}
-              <Suspense fallback={<div className="w-64 bg-surface border-r border-border" />}>
+              <Suspense fallback={<div className="w-60 bg-bgside border-r border-border" />}>
                 <FileExplorer />
               </Suspense>
 
@@ -155,6 +174,10 @@ function App() {
       </div>
 
       <StatusBar />
+
+      {/* Global Modals */}
+      <SearchModal />
+      <ShareSessionModal isOpen={isShareOpen} onClose={toggleShare} />
     </div>
   );
 }
