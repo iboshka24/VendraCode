@@ -1,6 +1,7 @@
 name = "vendracode-brain"
 main = "worker.js"
 compatibility_date = "2024-04-01"
+workers_dev = false
 
 routes = [
   { pattern = "brain.vendra.uz", custom_domain = true }
@@ -8,3 +9,14 @@ routes = [
 
 [observability]
 enabled = true
+
+# One Durable Object per multiplayer session. All peers of a session are routed
+# to the same object (idFromName), which is what makes cross-peer diff
+# broadcast and file locks actually work on Cloudflare's edge.
+[[durable_objects.bindings]]
+name = "SESSIONS"
+class_name = "SessionCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionCoordinator"]

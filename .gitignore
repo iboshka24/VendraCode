@@ -4,6 +4,7 @@ release/
 scratch_amoeba/
 .vendracode/
 .env
+.wrangler/
 *.log
 .DS_Store
 Thumbs.db

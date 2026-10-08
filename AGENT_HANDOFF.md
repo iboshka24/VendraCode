@@ -150,12 +150,26 @@ flowchart TD
      name = "vendracode-brain"
      main = "worker.js"
      compatibility_date = "2024-04-01"
+     workers_dev = false
 
      routes = [
        { pattern = "brain.vendra.uz", custom_domain = true }
      ]
+
+     [[durable_objects.bindings]]
+     name = "SESSIONS"
+     class_name = "SessionCoordinator"
+
+     [[migrations]]
+     tag = "v1"
+     new_sqlite_classes = ["SessionCoordinator"]
      ```
    - Cloudflare автоматически выделил Anycast IP (`188.114.96.0`, `188.114.97.0`) и SSL-сертификат.
+3. **Архитектура: Durable Objects + WebSocket Hibernation**:
+   - **Почему**: изолированные (isolates) Cloudflare Workers **не разделяют** in-memory состояние. С обычным `Map` сессий сообщения доходили только между пирами, случайно попавшими в один isolate — это приводило к тому, что `session:init` показывал `peers: ["Alice"]` вместо обоих пиров, а диффы не ретранслировались.
+   - **Решение**: один Durable Object `SessionCoordinator` на сессию (`idFromName(sessionId)`), все WS-пиры сессии попадают в один и тот же объект. Используется [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/api/websockets/) (`state.acceptWebSocket` + `state.getWebSockets()`), поэтому простаивающие сокеты не жгут CPU/duration, а метаданные пира переживают hibernation через `ws.serializeAttachment()`.
+   - Состояние комнаты (`repoUrl`, `locks`) персистится в storage ДО, локи автоматически снимаются при дисконнекте пира.
+   - REST `/api/session/<id>` проксируется в ДО (`/info`), поэтому здоровье сессии теперь глобально консистентно.
 3. **Функционал воркера**:
    - `GET /health` — проверка статуса сервиса, версии и количества активных сессий.
    - `WS /ws?session=<sessionId>&name=<peerName>&peer=<peerId>&repo=<repoUrl>`:
@@ -312,7 +326,19 @@ npx wrangler deploy
 ```
 *Wrangler уже авторизован под аккаунтом `vendrauz@gmail.com`, деплой занимает ~10 секунд.*
 
-> ⚠️ **Важно:** после изменения протокола в `cloudflare/worker.js` (например, добавления `diff:broadcast`) обязательно выполнить деплой — иначе IDE будет отправлять сообщения, которые воркер не понимает.
+**Одноразовая подготовка аккаунта (уже выполнено):** для деплоя воркеров с Durable Objects аккаунту нужен `workers.dev` поддомен. Его можно создать **командой**, без дашборда:
+```bash
+TOKEN=$(grep '^oauth_token' ~/.config/.wrangler/config/default.toml | cut -d'"' -f2)
+curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/workers/subdomain" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"subdomain": "vendracode"}'
+# → {"success":true,"result":{"subdomain":"vendracode"}}
+```
+Если токен истёк (`Authentication error`), сначала обнови его любой командой wrangler: `npx wrangler whoami`.
+
+> ⚠️ **Важно:** после изменения протокола в `cloudflare/worker.js` обязательно выполнить деплой — иначе IDE будет отправлять сообщения, которые воркер не понимает.
+
+> 🐛 **Известная грабля (уже исправлена):** `state.acceptWebSocket(ws, tags)` принимает **массив строк**, а не объект. Метаданные пира вешаются отдельно: `ws.serializeAttachment({ peerId, name })`. Иначе DO падает с `TypeError`, а клиент получает код закрытия `1006`.
 
 Проверка статуса edge-воркера:
 ```bash

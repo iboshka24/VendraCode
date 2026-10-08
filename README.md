@@ -173,7 +173,9 @@ The app talks to a Cloudflare Worker over a single WebSocket (`wss://brain.vendr
 | `lock:acquire` / `lock:release` → `locks:updated` | peer → peers | Advisory file locks |
 | `repo:set` → `repo:updated` | peer → peers | Shared GitHub repository link |
 | `presence:set` → `peers:list` | peer → peers | Display name for cursors & badges |
-| `session:init` / `peer:joined` / `peer:left` | worker → peer | Session state and presence |
+| `session:init` / `peer:joined` / `peer:left` / `peers:list` | worker → peer | Session state and presence |
+
+All peers of a session are routed to the same **Durable Object** (`SessionCoordinator`, one per session id), because Cloudflare Workers isolates do not share in-memory state — a plain `Map` silently drops messages between peers that land on different isolates. The hub uses the **WebSocket Hibernation API**, so idle sockets cost no CPU/duration, and `repoUrl` + file locks are persisted in the object's storage.
 
 To point the IDE at a self-hosted brain (e.g. `server/brain-server.js`), set:
 
