@@ -3,7 +3,7 @@ main = "worker.js"
 compatibility_date = "2024-04-01"
 
 routes = [
-  { pattern = "brain.vendra.uz/*", zone_name = "vendra.uz" }
+  { pattern = "brain.vendra.uz", custom_domain = true }
 ]
 
 [observability]
