@@ -10,7 +10,7 @@ export const ShareSessionModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
-  const { workspacePath, setWorkspacePath, setFileTree } = useAppStore();
+  const { workspacePath, setWorkspacePath, setFileTree, setBrainSessionId, setBrainRepoUrl } = useAppStore();
   const [activeTab, setActiveTab] = useState<'share' | 'join'>('share');
   const [copied, setCopied] = useState(false);
   const [githubRepoUrl, setGithubRepoUrl] = useState('https://github.com/ibrohim/VendraCode');
@@ -54,13 +54,25 @@ export const ShareSessionModal: React.FC<{
     setCloneStatus('Parsing friend session & GitHub repository...');
 
     try {
-      let targetRepo = '';
+      let parsedUrl: URL | null = null;
       try {
-        const parsed = new URL(joinUrlInput.trim());
-        targetRepo = parsed.searchParams.get('repo') || '';
+        parsedUrl = new URL(joinUrlInput.trim());
       } catch {
+        parsedUrl = null;
+      }
+
+      // brain.vendra.uz/session/<id>?repo=<github url>
+      const sessionMatch = joinUrlInput.trim().match(/\/session\/([\w.-]+)/);
+      const sessionId = sessionMatch?.[1]
+        || (parsedUrl?.hostname === 'brain.vendra.uz' ? parsedUrl.pathname.replace(/^\/session\//, '') : '');
+      let targetRepo = parsedUrl?.searchParams.get('repo') || '';
+
+      if (!targetRepo && /github\.com/.test(joinUrlInput.trim())) {
         targetRepo = joinUrlInput.trim();
       }
+
+      // Join the friend's live brain session (joins the same WebSocket room)
+      if (sessionId) setBrainSessionId(sessionId);
 
       if (targetRepo && window.vendraAPI?.os) {
         const repoName = targetRepo.split('/').pop()?.replace(/\.git$/, '') || 'shared-repo';
@@ -77,6 +89,9 @@ export const ShareSessionModal: React.FC<{
           throw new Error(cloneRes.stderr || cloneRes.error);
         }
 
+        // Advertise the shared repository to every peer in the session
+        setBrainRepoUrl(targetRepo);
+
         setCloneStatus('✓ Successfully synchronized repository! Switching workspace...');
         setWorkspacePath(targetDir);
         localStorage.setItem('vendracode-workspace', targetDir);
@@ -90,7 +105,11 @@ export const ShareSessionModal: React.FC<{
           onClose();
         }, 1200);
       } else {
-        throw new Error('Please enter a valid session link with a linked GitHub repo');
+        throw new Error(
+          sessionId
+            ? `Joined session "${sessionId}", but a GitHub repository link is required to clone the shared repo. Paste the full invite link.`
+            : 'Please enter a valid session link with a linked GitHub repo'
+        );
       }
     } catch (err: any) {
       setCloneStatus(`⚠️ Error: ${err.message}`);

@@ -10,6 +10,7 @@
 [![Electron](https://img.shields.io/badge/Electron-29-blue.svg)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178c6.svg)](https://www.typescriptlang.org/)
+[![Build](https://github.com/ibrohim/VendraCode/actions/workflows/build.yml/badge.svg)](https://github.com/ibrohim/VendraCode/actions/workflows/build.yml)
 
 </div>
 
@@ -21,7 +22,9 @@ VendraCode is an open-source, multiplayer AI-native development environment (IDE
 
 ### Key Features
 
-- 🧠 **The Shared Brain (Native Harness)** — Central coordination layer syncing file changes, locks, and agent progress in real time (`.vendracode/brain.json`)
+- 🧠 **The Shared Brain (Cloudflare Edge)** — Real-time WebSocket coordination at `brain.vendra.uz/ws`: live Monaco diff broadcast, file locks, peer presence and the shared GitHub repo link
+- 🤝 **Multiplayer Live Co-editing** — Teammates' `onDidChangeModelContent` edits stream into the editor as colored line highlights, gutter markers and `⌁ Alice · live edit` badges (with auto-reconnect backoff)
+- 🌳 **Git Worktree Switcher** — Switch or create isolated session worktrees from the status bar; every agent works its own branch without conflicts
 - 🤖 **Local Agent CLIs Support** — Native integration with **Antigravity CLI (`agy`)**, **Cline CLI (`cline`)**, **OpenCode CLI (`opencode`)**, and **Claude Code (`claude`)**
 - ⚠️ **Overlap Warnings & Advisory Locks** — Surfaces potential work duplication or file conflicts between running agents before conflicts occur
 - ⚡ **Built-in AI Coding Agent** — OpenCode-style tool-calling loop that creates, edits, and deletes files, executes terminal commands, and searches code
@@ -31,6 +34,7 @@ VendraCode is an open-source, multiplayer AI-native development environment (IDE
 - 🔄 **Live Sync & Workspace Watcher** — Real-time recursive file system sync between all CLI agents and the IDE
 - 📝 **Monaco Editor** — Full VS Code editing experience with syntax highlighting for 30+ languages
 - 💻 **Integrated Terminal** — Built-in terminal with xterm.js connected via IPC
+- 🛰️ **One-click Swarm Sharing** — Paste a `brain.vendra.uz` invite link to clone the shared repo, join the session and attach your agents
 - 🎨 **Beautiful Dark UI** — Modern, polished interface with smooth Framer Motion animations
 
 ## 📸 Screenshots
@@ -117,32 +121,64 @@ Control what AI agents can do in **Settings → Permissions**:
 ```
 VendraCode/
 ├── electron/           # Electron main process
-│   ├── main.js         # Window creation, IPC handlers
+│   ├── main.js         # Window creation, IPC handlers, git worktrees, PTY
 │   └── preload.js      # Context bridge API
 ├── src/                # React application
 │   ├── components/     # UI components
 │   │   ├── AIChat.tsx          # AI chat panel with tool-calling
-│   │   ├── CodeEditor.tsx      # Monaco editor with tabs
+│   │   ├── CodeEditor.tsx      # Monaco editor + live multiplayer diff broadcast
+│   │   ├── LiveAgentStream.tsx # Amoeba live co-typing simulation
+│   │   ├── LivePeersBadge.tsx  # brain.vendra.uz presence badge
+│   │   ├── WorktreeSwitcher.tsx# Git worktree switcher (status bar)
 │   │   ├── FileExplorer.tsx    # File tree explorer
 │   │   ├── MissionControl.tsx  # Agent dashboard
 │   │   ├── Settings.tsx        # Settings panel
+│   │   ├── ShareSessionModal.tsx# Share / join a swarm session
 │   │   ├── StatusBar.tsx       # Bottom status bar
 │   │   ├── Terminal.tsx        # xterm.js terminal
 │   │   └── TitleBar.tsx        # Top navigation bar
+│   ├── services/
+│   │   └── brainClient.ts      # WebSocket client for brain.vendra.uz
+│   ├── hooks/
+│   │   └── useBrainSync.ts     # Brain ⇄ store synchronization
 │   ├── stores/
 │   │   └── appStore.ts         # Zustand state management
 │   ├── types/
 │   │   └── index.ts            # TypeScript type definitions
 │   ├── utils/
-│   │   └── providers.ts        # LLM provider configs & tools
+│   │   ├── providers.ts        # LLM provider configs & tools
+│   │   └── remoteStyles.ts     # Remote-edit decoration styles
 │   ├── App.tsx                 # Main app layout
 │   ├── main.tsx                # React entry point
 │   └── index.css               # Global styles
+├── cloudflare/         # Edge coordination worker (brain.vendra.uz)
+│   └── worker.js
+├── .github/workflows/  # CI: Linux / Windows / macOS builds + releases
+│   └── build.yml
 ├── index.html          # Vite entry HTML
 ├── package.json
 ├── tailwind.config.js
 ├── tsconfig.json
 └── vite.config.ts
+```
+
+## 🔌 Multiplayer Coordination (`brain.vendra.uz`)
+
+The app talks to a Cloudflare Worker over a single WebSocket (`wss://brain.vendra.uz/ws`):
+
+| Message | Direction | Purpose |
+|---------|-----------|---------|
+| `diff:broadcast` → `diff:stream` | peer → peers | Live Monaco `onDidChangeModelContent` edits |
+| `typing:broadcast` → `typing:stream` | peer → peers | Amoeba word-level typing stream |
+| `lock:acquire` / `lock:release` → `locks:updated` | peer → peers | Advisory file locks |
+| `repo:set` → `repo:updated` | peer → peers | Shared GitHub repository link |
+| `presence:set` → `peers:list` | peer → peers | Display name for cursors & badges |
+| `session:init` / `peer:joined` / `peer:left` | worker → peer | Session state and presence |
+
+To point the IDE at a self-hosted brain (e.g. `server/brain-server.js`), set:
+
+```js
+localStorage.setItem('vendracode-brain-url', 'ws://localhost:4000');
 ```
 
 ## 🤝 Contributing

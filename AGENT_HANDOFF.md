@@ -31,34 +31,51 @@ Git-ветка: `main` (чистый статус, все последние и�
 │   └── wrangler.toml               # Конфигурация Custom Domain: brain.vendra.uz
 │
 ├── electron/                       # Главный процесс Electron
-│   ├── main.js                     # IPC-хэндлеры: PTY терминал, CLI агенты, FS, Git, сканер моделей
+│   ├── main.js                     # IPC-хэндлеры: PTY терминал, CLI агенты, FS, Git (+ worktrees), сканер моделей
 │   └── preload.js                  # Безопасный контекстный мост (contextBridge) между UI и OS
 │
 ├── src/                            # Фронтенд (React 18 + Vite + Tailwind CSS + Lucide)
 │   ├── components/
 │   │   ├── AIChat.tsx              # Чат с AI, выбор агента/модели, автономный агентский движок
-│   │   ├── CodeEditor.tsx          # Редактор кода (Monaco-подобный) с табами и запуском Live Stream
+│   │   ├── CodeEditor.tsx          # Monaco-редактор: табы, live-дифф трансляция, remote-декорации
 │   │   ├── LiveAgentStream.tsx     # Amoeba-стиль: живая печать кода агентами с бейджами и WPS
+│   │   ├── LivePeersBadge.tsx      # Бейдж присутствия (brain.vendra.uz online/offline + N пиров)
+│   │   ├── WorktreeSwitcher.tsx    # Переключатель активных Git Worktrees в статус-баре
 │   │   ├── MissionControl.tsx      # Amoeba Mission Control: дорожки (lanes), Approval Gates, Overlaps
 │   │   ├── Terminal.tsx            # Настоящий PTY-терминал на xterm.js
 │   │   ├── ShareSessionModal.tsx   # Модалка шаринга общего GitHub-репо и линковки к brain.vendra.uz
 │   │   ├── SearchModal.tsx         # Полнотекстовый поиск по проекту (Ctrl+Shift+F)
 │   │   ├── FileExplorer.tsx        # Дерево файлов с контекстными операциями
 │   │   ├── Settings.tsx            # Настройки провайдеров, ключей, тем и сканер моделей
+│   │   ├── StatusBar.tsx           # Нижняя панель: ветка, worktrees, локи, live-правки, brain-статус
 │   │   ├── TitleBar.tsx            # Нативный верхний бар с логотипом VendraCode и кнопками окна
 │   │   └── VendraLogo.tsx          # Фирменный кибернетический векторный SVG-логотип VendraCode
+│   │
+│   ├── services/                   # Клиентские сервисы (transport-слой, без React)
+│   │   └── brainClient.ts          # WebSocket-клиент к brain.vendra.uz/ws (diff/locks/peers, авто-reconnect)
+│   │
+│   ├── hooks/
+│   │   └── useBrainSync.ts         # Синхронизация brain-клиента со Zustand-store
 │   │
 │   ├── skills/                     # Навыки агентов (Hermes web_search, computer_use, bash)
 │   │   ├── web_search.ts           # Поиск в веб без ключей через DuckDuckGo Instant Answer API
 │   │   └── bash_runner.ts          # Выполнение shell-команд в изолированном окружении
 │   │
+│   ├── utils/
+│   │   └── remoteStyles.ts         # Per-agent CSS для Monaco remote-декораций
+│   │
 │   ├── App.tsx                     # Корневой лейаут, горячие клавиши, переключение вкладок
 │   ├── index.css                   # Стили Amoeba, неоновые акценты, стеклянные карточки
 │   └── main.tsx                    # Точка входа React
 │
-├── build/                          # Иконки и ассеты сборки
+├── build/                          # Иконки и ассеты сборки (Linux / Windows / macOS)
 │   ├── icon.svg                    # Оригинальный векторный логотип VendraCode
-│   └── icon.png                    # Растровый 512x512 логотип для сборщика Linux
+│   ├── icon.png                    # Растровый 512x512 логотип для сборщика Linux
+│   ├── icon.ico                    # Мультиразмерная иконка Windows (16–256 px)
+│   └── icon.icns                   # Мультиразмерная иконка macOS (16–1024 px)
+│
+├── .github/workflows/
+│   └── build.yml                   # CI: матрица Linux/Windows/macOS + публикация релиза по тегам
 │
 ├── release/                        # Скомпилированные production-бинарники
 │   ├── VendraCode-1.0.0.AppImage   # Готовый к запуску Linux AppImage (106 MB)
@@ -141,11 +158,13 @@ flowchart TD
    - Cloudflare автоматически выделил Anycast IP (`188.114.96.0`, `188.114.97.0`) и SSL-сертификат.
 3. **Функционал воркера**:
    - `GET /health` — проверка статуса сервиса, версии и количества активных сессий.
-   - `WS /ws?session=<sessionId>&name=<peerName>&repo=<repoUrl>`:
+   - `WS /ws?session=<sessionId>&name=<peerName>&peer=<peerId>&repo=<repoUrl>`:
      - При подключении отправляет `session:init` с текущим состоянием сессии, ссылкой на репозиторий и списком активных блокировок.
-     - Сообщения `typing:broadcast` транслируются всем подключенным участникам сессии в реальном времени.
-     - `lock:acquire` и `lock:release` обеспечивают бесконфликтное редактирование файлов разными агентами.
-     - `repo:set` транслирует единый GitHub-репозиторий всей команде.
+     - Сообщения `diff:broadcast` (Monaco `onDidChangeModelContent` payload) транслируются всем пирам как `diff:stream` — это основа живого совместного редактирования.
+     - `typing:broadcast` (legacy Amoeba-путь) → `typing:stream`.
+     - `lock:acquire` и `lock:release` обеспечивают бесконфликтное редактирование файлов разными агентами (`locks:updated`).
+     - `repo:set` транслирует единый GitHub-репозиторий всей команде (`repo:updated`).
+     - `presence:set` переименовывает пира после резолва username и рассылает `peers:list`.
 
 ---
 
@@ -271,12 +290,29 @@ npm run build:linux
 /home/ibrohim/VendraCode/release/VendraCode-1.0.0.AppImage
 ```
 
-### 4.4. Деплой изменений в Cloudflare Workers (`brain.vendra.uz`)
+### 4.4. Сборка Windows и macOS (локально и через CI)
+
+Локально (кросс-сборка из Linux возможна только с `wine`, проще использовать CI):
+```bash
+npm run build:win   # NSIS-инсталлятор + portable .exe
+npm run build:mac   # .dmg + .zip
+npm run build:all   # все три платформы
+```
+
+**Автосборка через GitHub Actions** — [`.github/workflows/build.yml`](file:///home/ibrohim/VendraCode/.github/workflows/build.yml):
+- Тег `v1.0.1` → сборка матрицей на `ubuntu` / `windows` / `macos` + автоматический GitHub Release со всеми артефактами.
+- `workflow_dispatch` → ручной запуск с опцией *publish*.
+- PR в `main` → только валидация (`tsc --noEmit` + сборка), без релиза.
+- `node-pty` использует **N-API** (`node-addon-api`), поэтому нативный модуль пересобирается на любом раннере без дополнительной настройки toolchain.
+
+### 4.5. Деплой изменений в Cloudflare Workers (`brain.vendra.uz`)
 ```bash
 cd /home/ibrohim/VendraCode/cloudflare
 npx wrangler deploy
 ```
 *Wrangler уже авторизован под аккаунтом `vendrauz@gmail.com`, деплой занимает ~10 секунд.*
+
+> ⚠️ **Важно:** после изменения протокола в `cloudflare/worker.js` (например, добавления `diff:broadcast`) обязательно выполнить деплой — иначе IDE будет отправлять сообщения, которые воркер не понимает.
 
 Проверка статуса edge-воркера:
 ```bash
@@ -285,16 +321,70 @@ curl -s --resolve brain.vendra.uz:443:188.114.96.0 https://brain.vendra.uz/healt
 
 ---
 
-## 5. 💡 ПОДСКАЗКИ И BACKLOG ДЛЯ СЛЕДУЮЩЕГО АГЕНТА
+## 5. ✅ РЕАЛИЗОВАННЫЕ ЗАДАЧИ (ЭТАП — MULTIPLAYER LIVE DIFF + WORKTREE SWITCHER + CI)
 
-Если пользователю потребуется дальнейшее развитие VendraCode IDE, вот приоритетные направления:
+### 5.1. Monaco Editor ↔ `brain.vendra.uz/ws` живой дифф-транспорт ✅
 
-1. **Реальный P2P / WebSocket биндинг для LiveAgentStream**:
-   - Сейчас `LiveAgentStream.tsx` симулирует анимацию совместной печати при локальном просмотре и слушает сокет при получении событий.
-   - Можно связать Monaco Editor `onDidChangeModelContent` с отправкой диффов через `brain.vendra.uz/ws`, чтобы нажатия клавиш тиммейтов транслировались в живой курсор посимвольно в оба конца.
-2. **Git Worktree Manager в GUI**:
-   - Добавить в нижнюю статус-панель выпадающий список активных Git Worktrees проекта с возможностью переключения веток агентов в один клик.
-3. **Поддержка сборки под Windows (.exe) и macOS (.dmg)**:
-   - В `package.json` уже настроен `electron-builder`. Для сборки Windows из Linux можно использовать `npm run build` с `electron-builder --win nsis` (требуется `wine`). Для macOS — через GitHub Actions CI.
-4. **Хранилище памяти Brain (RAG / Embeddings)**:
-   - В воркере Cloudflare (`worker.js`) можно подключить Cloudflare Vectorize или Upstash Vector для хранения долгосрочной памяти сессий между перезапусками агентов.
+**Что сделано:**
+
+| Файл | Назначение |
+|---|---|
+| [`src/services/brainClient.ts`](file:///home/ibrohim/VendraCode/src/services/brainClient.ts) | Singleton-клиент единственного WebSocket к `wss://brain.vendra.uz/ws`: подключение с авто-reconnect (exponential backoff, шапка 15 с), буфер удерживаемых локов, нормализация событий (`status` / `peers` / `repo` / `locks` / `diff`), детерминированный цвет пира по имени. |
+| [`src/hooks/useBrainSync.ts`](file:///home/ibrohim/VendraCode/src/hooks/useBrainSync.ts) | Мост между `brainClient` и Zustand-store: identity из `os.userInfo()`, автоопределение repo через `git remote get-url origin`, подписка на события, запись в `remoteEdits` + GC устаревших призрачных диффов. |
+| [`src/components/CodeEditor.tsx`](file:///home/ibrohim/VendraCode/src/components/CodeEditor.tsx) | `editor.onDidChangeModelContent` → троттлинг 120 мс → `brainClient.sendDiff(path, changes)` (Monaco-compatible `range` / `text` / `rangeLength`). Входящие удалённые правки рисуются как Monaco-декорации (line highlight + gutter marker + inline-бейдж `⌁ Alice · live edit`). |
+| [`src/utils/remoteStyles.ts`](file:///home/ibrohim/VendraCode/src/utils/remoteStyles.ts) | Генерация per-agent CSS-классов для декораций (безопасная санация цвета). |
+| [`src/components/LivePeersBadge.tsx`](file:///home/ibrohim/VendraCode/src/components/LivePeersBadge.tsx) | Бейдж присутствия в панели табов: `Brain: live · N online`. |
+| [`cloudflare/worker.js`](file:///home/ibrohim/VendraCode/cloudflare/worker.js) | Новый тип сообщения `diff:broadcast` → ретрансляция `diff:stream` всем пирам сессии (payload = change-массив Monaco, обрезан до 64 элементов), а также `presence:set` → `peers:list`. |
+
+**Протокол WS (обновлён):**
+```text
+Клиент → Воркер:
+  diff:broadcast   { agentId, agentName, color, filePath, changes:[{range,text,rangeLength}], timestamp }
+  lock:acquire     { filePath, agentId, agentName }
+  lock:release     { filePath, agentId }
+  presence:set     { peerName }
+  typing:broadcast { filePath, lineNum, text }        (legacy Amoeba-путь, нормализуется в diff)
+
+Воркер → Клиент:
+  session:init / peer:joined / peer:left / peers:list / repo:updated
+  locks:updated   { locks: { path: { agentId, agentName, timestamp } } }
+  diff:stream     { agentId, agentName, color, filePath, changes, timestamp }
+  typing:stream   (как раньше)
+```
+
+**Важные инженерные детали:**
+- Собственные правки никогда не эхокатся обратно в редактор (фильтр по `peerId`).
+- Программатическое применение контента (кнопка *Apply to file* в LiveAgentStream) не рассылается тиммейтам — счётчик `suppressBroadcastRef`.
+- Большой paste обрезается до 400 символов, чтобы не зафлудить edge-сеть (range сохраняется).
+- Все локи переустанавливаются автоматически после reconnect.
+- Необязательный override адреса для self-hosted мозга: `localStorage['vendracode-brain-url'] = 'ws://localhost:4000'` (см. [`server/brain-server.js`](file:///home/ibrohim/VendraCode/server/brain-server.js)).
+
+### 5.2. Переключатель Git Worktrees в статус-баре ✅
+
+- [`src/components/WorktreeSwitcher.tsx`](file:///home/ibrohim/VendraCode/src/components/WorktreeSwitcher.tsx) — выпадающий список активных worktrees в левой части [`StatusBar.tsx`](file:///home/ibrohim/VendraCode/src/components/StatusBar.tsx): ветка, признак `main`, переключение в один клик, создание нового worktree (`../worktrees/<branch>` от HEAD), удаление неактивных.
+- IPC в [`electron/main.js`](file:///home/ibrohim/VendraCode/electron/main.js): `git:worktrees` (парсит `git worktree list --porcelain` через `execFile`, без shell-инъекций), `git:worktree:add` (валидация имени ветки regex `^[A-Za-z0-9][A-Za-z0-9._/-]*$`), `git:worktree:remove`.
+- Мост в [`electron/preload.js`](file:///home/ibrohim/VendraCode/electron/preload.js): `git.worktrees` / `git.worktreeAdd` / `git.worktreeRemove` + `os.userInfo`.
+- Переключение worktree = смена workspace (эксплорер + терминал перечитываются из нового корня), сам git-объект остаётся общим для всей команды.
+
+### 5.3. GitHub Actions: сборка Windows (.exe) и macOS (.dmg) ✅
+
+- [`.github/workflows/build.yml`](file:///home/ibrohim/VendraCode/.github/workflows/build.yml) — матрица сборки:
+
+  | OS | Артефакты | Скрипт |
+  |---|---|---|
+  | `ubuntu-latest` | `.AppImage`, `.deb` | `build:linux` |
+  | `windows-latest` | `.exe` (NSIS + portable) | `build:win` |
+  | `macos-latest` | `.dmg`, `.zip` | `build:mac` |
+
+- Триггеры: теги `v*`, `workflow_dispatch` (с опцией publish) и PR в `main` (только сборка, без релиза).
+- `concurrency` отменяет устаревшие прогоны; `actions/setup-node@v4` с npm-кэшем; проверка типов `tsc --noEmit`; артефакты живут 14 дней; для тегов отдельная job `release` публикует всё через `softprops/action-gh-release@v2`.
+- Окружение: `CSC_IDENTITY_AUTO_DISCOVERY: false` (сборка без подписи на CI) и `GH_TOKEN`.
+- Иконки сгенерированы под все платформы: `build/icon.ico` (6 размеров 16–256), `build/icon.icns` (icp4/icp5/icp6/ic07–ic10).
+
+---
+
+## 6. 💡 BACKLOG ДЛЯ СЛЕДУЮЩЕГО АГЕНТА
+
+1. **Хранилище памяти Brain (RAG / Embeddings)** — подключить Cloudflare Vectorize или Upstash Vector в `worker.js`, чтобы сессии выживали между перезапусками агентов.
+2. **Click-to-follow remote edit** — принятый `diff:stream` можно не только подсвечивать, но и применять (с подтверждением), превращая VendraCode в полноценный live-share редактор.
+3. **Применение удалённых диффов с CRDT-подобным merge** — сейчас декорации read-only, чтобы не ломать локальный буфер.

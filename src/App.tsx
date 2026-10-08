@@ -1,4 +1,5 @@
 import { useAppStore } from '@/stores/appStore';
+import { useBrainSync } from '@/hooks/useBrainSync';
 import { TitleBar } from '@/components/TitleBar';
 import { StatusBar } from '@/components/StatusBar';
 import { CodeEditor } from '@/components/CodeEditor';
@@ -37,7 +38,12 @@ function App() {
     addBrainAction,
     isShareOpen,
     toggleShare,
+    setBrainSessionId,
+    setBrainRepoUrl,
   } = useAppStore();
+
+  // Cloudflare Edge Brain multiplayer sync (brain.vendra.uz/ws)
+  useBrainSync();
 
   // Auto-load last workspace or default workspace on start so Explorer isn't blank
   useEffect(() => {

@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { exec, spawn } = require('child_process');
+const { exec, execFile, spawn } = require('child_process');
 
 // Ensure PATH includes user bin folders where opencode, agy, etc. are located
 const homeDir = process.env.HOME || '';
@@ -314,9 +314,100 @@ ipcMain.handle('git:log', async (_event, cwd, count = 20) => {
   });
 });
 
+// ─── Git Worktrees (multiplayer isolation) ─────────────────────────
+
+// Parse `git worktree list --porcelain` output into structured worktrees
+function parseWorktreeList(stdout) {
+  const worktrees = [];
+  let current = null;
+
+  const push = () => {
+    if (current) worktrees.push(current);
+    current = null;
+  };
+
+  for (const raw of stdout.split('\n')) {
+    const line = raw.trim();
+    if (!line) { push(); continue; }
+    if (line.startsWith('worktree ')) {
+      push();
+      current = { path: line.slice('worktree '.length).trim(), head: '', branch: null, isMain: false, isBare: false, isDetached: false };
+    } else if (current && line.startsWith('HEAD ')) {
+      current.head = line.slice('HEAD '.length).trim();
+    } else if (current && line.startsWith('branch ')) {
+      current.branch = line.slice('branch '.length).trim().replace(/^refs\/heads\//, '') || null;
+    } else if (current) {
+      if (line === 'bare') current.isBare = true;
+      if (line === 'detached') current.isDetached = true;
+    }
+  }
+  push();
+
+  // First entry is always the main working tree
+  if (worktrees.length > 0 && !worktrees[0].isBare) worktrees[0].isMain = true;
+  return worktrees;
+}
+
+ipcMain.handle('git:worktrees', async (_event, cwd) => {
+  if (!cwd) return [];
+  return new Promise((resolve) => {
+    execFile('git', ['worktree', 'list', '--porcelain'], { cwd }, (error, stdout) => {
+      if (error) { resolve([]); return; }
+      try {
+        resolve(parseWorktreeList(stdout));
+      } catch {
+        resolve([]);
+      }
+    });
+  });
+});
+
+ipcMain.handle('git:worktree:add', async (_event, { cwd, path: worktreePath, branch, create = true } = {}) => {
+  if (!cwd || !worktreePath || !branch) {
+    return { success: false, error: 'Missing cwd, worktree path or branch' };
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(branch)) {
+    return { success: false, error: `Invalid branch name: ${branch}` };
+  }
+
+  const args = create ? ['worktree', 'add', worktreePath, '-b', branch] : ['worktree', 'add', worktreePath, branch];
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd }, (error, stdout, stderr) => {
+      if (error) {
+        resolve({ success: false, error: (stderr || error.message || '').trim().split('\n').slice(0, 3).join(' ') });
+        return;
+      }
+      resolve({ success: true, path: worktreePath, branch });
+    });
+  });
+});
+
+ipcMain.handle('git:worktree:remove', async (_event, { cwd, path: worktreePath } = {}) => {
+  if (!cwd || !worktreePath) return { success: false, error: 'Missing cwd or worktree path' };
+  return new Promise((resolve) => {
+    execFile('git', ['worktree', 'remove', '--force', worktreePath], { cwd }, (error, stdout, stderr) => {
+      if (error) {
+        resolve({ success: false, error: (stderr || error.message || '').trim().split('\n').slice(0, 3).join(' ') });
+        return;
+      }
+      resolve({ success: true });
+    });
+  });
+});
+
 const { webSearch, fetchUrl, takeScreenshot, getSystemInfo } = require('./tools');
 
 // ─── Shell / External links ────────────────────────────────────────
+
+// ─── OS Utilities ───────────────────────────────────────────────────
+
+ipcMain.handle('os:userInfo', async () => {
+  const os = require('os');
+  const info = os.userInfo();
+  return {
+    username: info.username || process.env.USER || process.env.LOGNAME || 'You',
+  };
+});
 
 ipcMain.handle('shell:openExternal', async (_event, url) => {
   await shell.openExternal(url);

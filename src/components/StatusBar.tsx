@@ -1,9 +1,21 @@
 import React, { useEffect } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { GitBranch, AlertCircle, Wifi, WifiOff, Zap, Shield } from 'lucide-react';
+import { AlertCircle, Wifi, WifiOff, Loader, Zap, Shield, Pencil } from 'lucide-react';
+import { WorktreeSwitcher } from './WorktreeSwitcher';
+
+const BRAIN_STATUS_LABEL: Record<string, string> = {
+  idle: 'idle',
+  connecting: 'connecting',
+  online: 'live',
+  reconnecting: 'retrying',
+  offline: 'offline',
+};
 
 export function StatusBar() {
-  const { gitStatus, setGitStatus, workspacePath, agentStatus, activeProvider } = useAppStore();
+  const {
+    gitStatus, setGitStatus, workspacePath, agentStatus, activeProvider,
+    brainStatus, brainPeers, activeLocks, remoteEdits
+  } = useAppStore();
 
   // Poll git status
   useEffect(() => {
@@ -24,16 +36,20 @@ export function StatusBar() {
   }, [workspacePath, setGitStatus]);
 
   const modifiedCount = gitStatus?.files.length || 0;
+  const lockCount = Object.keys(activeLocks).length;
+  const liveEdits = Object.values(remoteEdits).filter((e) => Date.now() - e.timestamp < 15000);
+
+  const BrainIcon = brainStatus === 'online' ? Wifi : brainStatus === 'connecting' || brainStatus === 'reconnecting' ? Loader : WifiOff;
+  const brainColor =
+    brainStatus === 'online' ? 'text-ok' :
+    brainStatus === 'connecting' || brainStatus === 'reconnecting' ? 'text-warning' : 'text-danger';
 
   return (
     <footer className="h-6 border-t border-border bg-bgtitle flex items-center justify-between px-3 text-[11px] text-text-muted select-none shrink-0 font-mono">
       {/* Left */}
       <div className="flex items-center gap-3">
-        {/* Git Branch */}
-        <span className="flex items-center gap-1 text-text-secondary hover:text-text-primary cursor-pointer transition">
-          <GitBranch size={11} />
-          <span>{gitStatus?.branch || 'main'}</span>
-        </span>
+        {/* Git worktree switcher (branch + linked worktrees) */}
+        <WorktreeSwitcher />
 
         {/* Modified files */}
         {modifiedCount > 0 ? (
@@ -45,7 +61,15 @@ export function StatusBar() {
           <span className="text-[10px] text-text-hint">Clean worktree</span>
         )}
 
-        {/* Advisory Locks */}
+        {/* Advisory Locks held by teammates */}
+        {lockCount > 0 && (
+          <span className="flex items-center gap-1 text-warn" title={Object.entries(activeLocks).map(([f, l]) => `${l.agentName} → ${f}`).join('\n')}>
+            <Shield size={10} />
+            {lockCount} locked
+          </span>
+        )}
+
+        {/* Advisory Locks (zero-conflict guarantee) */}
         <span className="flex items-center gap-1 text-text-hint">
           <Shield size={10} />
           Zero Conflicts
@@ -54,6 +78,14 @@ export function StatusBar() {
 
       {/* Right */}
       <div className="flex items-center gap-3">
+        {/* Live remote edits currently being broadcast in this session */}
+        {liveEdits.length > 0 && (
+          <span className="flex items-center gap-1 text-accent" title={liveEdits.map((e) => `${e.agentName} · ${e.filePath}`).join('\n')}>
+            <Pencil size={10} />
+            {liveEdits.length} live edit{liveEdits.length > 1 ? 's' : ''}
+          </span>
+        )}
+
         {/* Agent Status */}
         <span className={`flex items-center gap-1 ${
           agentStatus === 'running' ? 'text-ok' :
@@ -69,10 +101,17 @@ export function StatusBar() {
           <span>{activeProvider?.name || 'Local'}</span>
         </span>
 
-        {/* Brain Live Sync */}
-        <span className="flex items-center gap-1.5 text-text-secondary">
-          <span className="dotpulse" />
-          <span>Brain: Live</span>
+        {/* Brain Live Sync (real Cloudflare edge connection state) */}
+        <span
+          className={`flex items-center gap-1.5 ${brainColor}`}
+          title={
+            brainStatus === 'online'
+              ? `brain.vendra.uz · ${brainPeers.length} peer${brainPeers.length === 1 ? '' : 's'} in session`
+              : `brain.vendra.uz · ${brainStatus}`
+          }
+        >
+          <BrainIcon size={10} className={brainStatus === 'connecting' || brainStatus === 'reconnecting' ? 'animate-spin' : brainStatus === 'online' ? '' : 'opacity-80'} />
+          <span>Brain: {BRAIN_STATUS_LABEL[brainStatus] || brainStatus}{brainStatus === 'online' && brainPeers.length > 0 ? ` · ${brainPeers.length}` : ''}</span>
         </span>
 
         <span className="text-text-hint">UTF-8</span>

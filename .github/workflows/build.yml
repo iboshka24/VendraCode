@@ -1,0 +1,117 @@
+name: Build & Release VendraCode
+
+on:
+  # Version tags (v1.0.0, v1.1.0-rc1, …) produce platform installers + a release
+  push:
+    tags: ['v*']
+  # Manual runs: build everything, optionally publish a release from the build
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Create a GitHub release from the built artifacts'
+        type: boolean
+        default: false
+  # Keep pull requests validated without publishing anything
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'server/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: 'Linux · AppImage + deb'
+            artifact: linux
+            script: build:linux
+            filters: |
+              release/*.AppImage
+              release/*.deb
+              release/*.blockmap
+          - os: windows-latest
+            name: 'Windows · exe (NSIS + portable)'
+            artifact: windows
+            script: build:win
+            filters: |
+              release/*.exe
+              release/*.blockmap
+          - os: macos-latest
+            name: 'macOS · dmg + zip'
+            artifact: macos
+            script: build:mac
+            filters: |
+              release/*.dmg
+              release/*.zip
+              release/*.blockmap
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check renderer
+        run: npx tsc --noEmit
+
+      - name: Build installers (npm run ${{ matrix.script }})
+        run: npm run ${{ matrix.script }}
+        env:
+          # No signing certificates on CI runners: build unsigned artifacts.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          # Lets electron-builder resolve the repo for update metadata / publishing.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vendracode-${{ matrix.artifact }}
+          path: ${{ matrix.filters }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vendracode-*
+          merge-multiple: true
+          path: release
+
+      - name: List artifacts
+        run: ls -lh release/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+          generate_release_notes: true

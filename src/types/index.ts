@@ -18,6 +18,7 @@ export interface VendraAPI {
   };
   os: {
     exec: (command: string, cwd?: string) => Promise<ExecResult>;
+    userInfo: () => Promise<{ username: string }>;
   };
   dialog: {
     openDirectory: () => Promise<string | null>;
@@ -25,6 +26,9 @@ export interface VendraAPI {
   git: {
     status: (cwd: string) => Promise<GitStatus>;
     log: (cwd: string, count?: number) => Promise<GitLogEntry[]>;
+    worktrees: (cwd: string) => Promise<GitWorktree[]>;
+    worktreeAdd: (opts: { cwd: string; path: string; branch: string; create?: boolean }) => Promise<{ success: boolean; path?: string; branch?: string; error?: string }>;
+    worktreeRemove: (opts: { cwd: string; path: string }) => Promise<{ success: boolean; error?: string }>;
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
@@ -84,6 +88,47 @@ export interface BrainAction {
   summary: string;
   timestamp: number;
 }
+
+// ─── Cloudflare Brain (Multiplayer Live Diff) Types ─────────────────
+
+/** Connection state of the renderer's WebSocket to brain.vendra.uz/ws */
+export type BrainConnectionStatus = 'idle' | 'connecting' | 'online' | 'reconnecting' | 'offline';
+
+/**
+ * A single Monaco-compatible text change broadcast to peers.
+ * Mirrors the shape of `monaco.editor.IModelContentChange` so the renderer
+ * can forward `onDidChangeModelContent` payloads without transformation.
+ */
+export interface RemoteDiffChange {
+  range: {
+    startLineNumber: number;
+    startColumn: number;
+    endLineNumber: number;
+    endColumn: number;
+  };
+  /** Text inserted at `range` start (truncated before broadcast). */
+  text: string;
+  /** Number of characters removed from `range` (Monaco `rangeLength`). */
+  rangeLength: number;
+}
+
+/** A live edit performed by a remote teammate/agent on a file. */
+export interface RemoteDiff {
+  agentId: string;
+  agentName: string;
+  color: string;
+  filePath: string;
+  changes: RemoteDiffChange[];
+  timestamp: number;
+}
+
+/** Events emitted by the Cloudflare brain client towards the UI. */
+export type BrainEvent =
+  | { type: 'status'; status: BrainConnectionStatus }
+  | { type: 'peers'; peers: string[] }
+  | { type: 'repo'; repoUrl: string }
+  | { type: 'locks'; locks: Record<string, BrainLock> }
+  | { type: 'diff'; diff: RemoteDiff };
 
 declare global {
   interface Window {
@@ -239,6 +284,17 @@ export interface GitLogEntry {
   message: string;
   author: string;
   date: string;
+}
+
+/** A single `git worktree` entry (main checkout or linked worktree). */
+export interface GitWorktree {
+  path: string;
+  head: string;
+  /** Branch name without the `refs/heads/` prefix, or null when detached. */
+  branch: string | null;
+  isMain: boolean;
+  isBare: boolean;
+  isDetached: boolean;
 }
 
 // ─── Settings Types ────────────────────────────────────────────────

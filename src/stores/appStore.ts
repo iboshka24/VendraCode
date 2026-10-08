@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import type {
   FileEntry, EditorTab, ChatMessage, AgentLane, Session, ApprovalRequest,
-  ProviderConfig, AppSettings, GitStatus, AgentStatus, SettingsTab
+  ProviderConfig, AppSettings, GitStatus, AgentStatus, SettingsTab,
+  BrainConnectionStatus, RemoteDiff, GitWorktree,
+  BrainLock, BrainAction, LocalCLIDetected
 } from '@/types';
 import { DEFAULT_PROVIDERS } from '@/utils/providers';
 import { getLanguageFromPath } from '@/utils/providers';
@@ -96,6 +98,24 @@ interface AppState {
   setActiveLocks: (locks: Record<string, BrainLock>) => void;
   brainActions: BrainAction[];
   addBrainAction: (action: BrainAction) => void;
+
+  // Cloudflare Edge Brain (multiplayer live diffs)
+  brainSessionId: string;
+  setBrainSessionId: (id: string) => void;
+  brainStatus: BrainConnectionStatus;
+  setBrainStatus: (status: BrainConnectionStatus) => void;
+  brainPeers: string[];
+  setBrainPeers: (peers: string[]) => void;
+  brainRepoUrl: string;
+  setBrainRepoUrl: (url: string) => void;
+  /** Live remote edits keyed by `${agentId}::${filePath}`. */
+  remoteEdits: Record<string, RemoteDiff>;
+  applyRemoteEdit: (diff: RemoteDiff) => void;
+  pruneRemoteEdits: (maxAgeMs?: number) => void;
+
+  // Git worktrees (multiplayer isolation)
+  worktrees: GitWorktree[];
+  setWorktrees: (worktrees: GitWorktree[]) => void;
 }
 
 const loadSettings = (): AppSettings => {
@@ -366,5 +386,42 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveLocks: (locks) => set({ activeLocks: locks }),
   brainActions: [],
   addBrainAction: (action) => set((s) => ({ brainActions: [action, ...s.brainActions].slice(0, 100) })),
+
+  // Cloudflare Edge Brain (multiplayer live diffs)
+  brainSessionId: 'default-session',
+  setBrainSessionId: (id) => {
+    const value = id || 'default-session';
+    try { localStorage.setItem('vendracode-session', value); } catch {}
+    set({ brainSessionId: value });
+  },
+  brainStatus: 'idle',
+  setBrainStatus: (status) => set({ brainStatus: status }),
+  brainPeers: [],
+  setBrainPeers: (peers) => set({ brainPeers: peers }),
+  brainRepoUrl: '',
+  setBrainRepoUrl: (url) => set({ brainRepoUrl: url }),
+  // Live remote edits keyed by `${agentId}::${filePath}`.
+  remoteEdits: {},
+  applyRemoteEdit: (diff) =>
+    set((s) => {
+      const next = { ...s.remoteEdits, [`${diff.agentId}::${diff.filePath}`]: diff };
+      // Drop stale entries so ghost decorations disappear when a peer stops.
+      const now = Date.now();
+      for (const [key, value] of Object.entries(next)) {
+        if (now - value.timestamp > 15000) delete next[key];
+      }
+      return { remoteEdits: next };
+    }),
+  pruneRemoteEdits: (maxAgeMs = 15000) =>
+    set((s) => {
+      const now = Date.now();
+      const entries = Object.entries(s.remoteEdits).filter(([, v]) => now - v.timestamp <= maxAgeMs);
+      if (entries.length === Object.keys(s.remoteEdits).length) return {};
+      return { remoteEdits: Object.fromEntries(entries) };
+    }),
+
+  // Git worktrees (multiplayer isolation)
+  worktrees: [],
+  setWorktrees: (worktrees) => set({ worktrees }),
 }));
 

@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('vendraAPI', {
   // Command execution (for AI agent tools)
   os: {
     exec: (command, cwd) => ipcRenderer.invoke('os:exec', command, cwd),
+    userInfo: () => ipcRenderer.invoke('os:userInfo'),
   },
 
   // Dialog
@@ -42,6 +43,9 @@ contextBridge.exposeInMainWorld('vendraAPI', {
   git: {
     status: (cwd) => ipcRenderer.invoke('git:status', cwd),
     log: (cwd, count) => ipcRenderer.invoke('git:log', cwd, count),
+    worktrees: (cwd) => ipcRenderer.invoke('git:worktrees', cwd),
+    worktreeAdd: (opts) => ipcRenderer.invoke('git:worktree:add', opts),
+    worktreeRemove: (opts) => ipcRenderer.invoke('git:worktree:remove', opts),
   },
 
   // Shell

@@ -298,3 +298,25 @@
   scrollbar-width: thin;
   scrollbar-color: var(--line2) transparent;
 }
+
+/* ─── Monaco multiplayer live-diff decorations ────────────────────── */
+/* Per-agent rules are generated at runtime by src/utils/remoteStyles.ts */
+
+.vc-remote-line,
+.vc-remote-line-0 {
+  background: rgba(124, 58, 237, 0.14);
+}
+.vc-remote-inline,
+.vc-remote-inline-0 {
+  color: #7c3aed;
+  font-style: italic;
+  opacity: 0.75;
+  font-size: 0.85em;
+  white-space: pre;
+}
+.vc-remote-gutter,
+.vc-remote-gutter-0 {
+  border-left: 2px solid #7c3aed;
+  margin-left: 2px;
+  cursor: pointer;
+}

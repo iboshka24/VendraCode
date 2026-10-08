@@ -51,7 +51,7 @@ export const AIChat: React.FC = () => {
   const [expandedToolMsgId, setExpandedToolMsgId] = useState<string | null>(null);
 
   // Dynamic Model Scanner state
-  const [scannedModels, setScannedModels] = useState<Array<{ id: string; name: string; provider?: string }>>([]);
+  const [scannedModels, setScannedModels] = useState<Array<{ id: string; name: string; provider?: string; size?: string; source?: string }>>([]);
   const [isScanningModels, setIsScanningModels] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
   

@@ -1,38 +1,103 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { useAppStore } from '@/stores/appStore';
-import { X, Circle, FolderOpen, Compass, Sparkles, Play, Users, GitCommit, Shield } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { brainClient } from '@/services/brainClient';
+import { remoteClassToken, renderRemoteStyles } from '@/utils/remoteStyles';
+import { X, Circle, FolderOpen, Compass, Sparkles, Play, Users, GitCommit, Shield } from 'lucide-react';import { motion, AnimatePresence } from 'framer-motion';
 import { LiveAgentStream } from './LiveAgentStream';
 import { VendraLogo } from './VendraLogo';
+import { LivePeersBadge } from './LivePeersBadge';
+
+/** Live diff broadcast is throttled so a fast typist can't flood the edge. */
+const BROADCAST_THROTTLE_MS = 120;
 
 export function CodeEditor() {
   const {
     openTabs, activeTabId, setActiveTab, closeTab,
     updateTabContent, markTabClean, workspacePath, setWorkspacePath,
-    setFileTree, setActiveView, toggleChat, activeLocks, settings
+    setFileTree, setActiveView, toggleChat, settings, remoteEdits
   } = useAppStore();
   const editorRef = useRef<any>(null);
+  const monacoRef = useRef<any>(null);
+  const decorationsRef = useRef<any>(null);
+  const lastBroadcastRef = useRef(0);
+  /** Counts programmatic content applications that must not be echoed to peers. */
+  const suppressBroadcastRef = useRef(0);
+  /** Latest active tab, readable from the (memoized) Monaco mount callback. */
+  const activeTabRef = useRef<any>(null);
   const [isLiveStreaming, setIsLiveStreaming] = useState(false);
 
   const activeTab = openTabs.find((t) => t.id === activeTabId);
+  activeTabRef.current = activeTab;
 
-  const handleEditorMount: OnMount = (editor) => {
+  const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    monacoRef.current = monaco;
+    decorationsRef.current = editor.createDecorationsCollection([]);
+    // Path owned by this editor instance (used for lock cleanup on dispose).
+    const mountedPath = activeTabRef.current?.path as string | undefined;
 
     // Ctrl+S to save
     editor.addCommand(
       2048 | 49, // CtrlCmd + S
       async () => {
-        if (!activeTab) return;
+        const tab = activeTabRef.current;
+        if (!tab) return;
         try {
-          await window.vendraAPI.fs.writeFile(activeTab.path, activeTab.content);
-          markTabClean(activeTab.id);
+          await window.vendraAPI.fs.writeFile(tab.path, tab.content);
+          markTabClean(tab.id);
         } catch (err) {
           console.error('Failed to save:', err);
         }
       }
     );
+
+    // ── Live multiplayer diff broadcast → brain.vendra.uz/ws ───────────
+    // Monaco emits semantic model changes; we forward them verbatim so remote
+    // peers can render live, line-accurate ghost edits.
+    const contentDisposable = editor.onDidChangeModelContent((event) => {
+      const tab = activeTabRef.current;
+      if (!tab) return;
+
+      // Programmatic application (e.g. "Apply to file") — don't echo it.
+      if (suppressBroadcastRef.current > 0) {
+        suppressBroadcastRef.current -= 1;
+        return;
+      }
+
+      // Only real, user-driven edits should reach teammates.
+      if (!editor.hasTextFocus()) return;
+
+      const now = Date.now();
+      if (now - lastBroadcastRef.current < BROADCAST_THROTTLE_MS) return;
+      lastBroadcastRef.current = now;
+
+      const changes = event.changes.map((change) => ({
+        range: {
+          startLineNumber: change.range.startLineNumber,
+          startColumn: change.range.startColumn,
+          endLineNumber: change.range.endLineNumber,
+          endColumn: change.range.endColumn,
+        },
+        text: change.text,
+        rangeLength: change.rangeLength,
+      }));
+
+      brainClient.sendDiff(tab.path, changes);
+    });
+
+    // Advisory file lock: teammates see the file as "in use" while we type.
+    const focusDisposable = editor.onDidFocusEditorText(() => {
+      const tab = activeTabRef.current;
+      if (tab) brainClient.acquireLock(tab.path);
+    });
+
+    // Release the advisory lock when the widget unmounts (tab close / switch).
+    editor.onDidDispose(() => {
+      contentDisposable.dispose();
+      focusDisposable.dispose();
+      if (mountedPath) brainClient.releaseLock(mountedPath);
+    });
   };
 
   const handleChange = useCallback(
@@ -42,6 +107,25 @@ export function CodeEditor() {
       }
     },
     [activeTabId, updateTabContent]
+  );
+
+  /** Applies code produced by an agent to the current tab without echoing it. */
+  const applyProgrammaticContent = useCallback(
+    (code: string) => {
+      if (!activeTabId) return;
+      suppressBroadcastRef.current += 1;
+      updateTabContent(activeTabId, code);
+    },
+    [activeTabId, updateTabContent]
+  );
+
+  const handleCloseTab = useCallback(
+    (id: string) => {
+      const tab = openTabs.find((t) => t.id === id);
+      if (tab) brainClient.releaseLock(tab.path);
+      closeTab(id);
+    },
+    [openTabs, closeTab]
   );
 
   const handleOpenFolder = async () => {
@@ -58,15 +142,53 @@ export function CodeEditor() {
     }
   };
 
+  // ── Render live remote edits as Monaco decorations ───────────────────
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco || !activeTab) return;
+
+    const model = editor.getModel();
+    const lineCount = model ? model.getLineCount() : 1;
+    const myPeerId = brainClient.getIdentity().peerId;
+
+    const edits = Object.values(remoteEdits).filter(
+      (edit) => edit.filePath === activeTab.path && edit.agentId !== myPeerId
+    );
+
+    decorationsRef.current?.set(
+      edits.map((edit) => {
+        const first = edit.changes[0];
+        const line = Math.min(Math.max(1, first?.range.startLineNumber || 1), lineCount);
+        const token = remoteClassToken(edit.agentId);
+        return {
+          range: new monaco.Range(line, 1, line, 1),
+          options: {
+            isWholeLine: true,
+            className: `vc-remote-line-${token}`,
+            linesDecorationsClassName: `vc-remote-gutter-${token}`,
+            after: {
+              content: `  ⌁ ${edit.agentName} · live edit`,
+              inlineClassName: `vc-remote-inline-${token}`,
+            },
+          },
+        };
+      })
+    );
+
+    renderRemoteStyles(edits.map((edit) => ({ agentId: edit.agentId, color: edit.color })));
+  }, [remoteEdits, activeTab]);
+
   // Save on Ctrl+S globally
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        if (!activeTab) return;
+        const tab = activeTabRef.current;
+        if (!tab) return;
         try {
-          await window.vendraAPI.fs.writeFile(activeTab.path, activeTab.content);
-          markTabClean(activeTab.id);
+          await window.vendraAPI.fs.writeFile(tab.path, tab.content);
+          markTabClean(tab.id);
         } catch (err) {
           console.error('Failed to save:', err);
         }
@@ -74,7 +196,7 @@ export function CodeEditor() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [activeTab, markTabClean]);
+  }, [markTabClean]);
 
   // If in live stream view, show the full multi-agent collaborative typing screen
   if (isLiveStreaming) {
@@ -84,10 +206,8 @@ export function CodeEditor() {
           filename={activeTab?.name || 'src/auth/authenticate.ts'}
           initialContent={activeTab?.content}
           onApplyToFile={(code) => {
-            if (activeTabId) {
-              updateTabContent(activeTabId, code);
-              setIsLiveStreaming(false);
-            }
+            applyProgrammaticContent(code);
+            setIsLiveStreaming(false);
           }}
           onClose={() => setIsLiveStreaming(false)}
         />
@@ -190,7 +310,7 @@ export function CodeEditor() {
                   <button
                     type="button"
                     className="opacity-0 group-hover:opacity-100 hover:bg-chip rounded p-0.5 transition-opacity shrink-0"
-                    onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                    onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
                   >
                     <X size={11} />
                   </button>
@@ -202,6 +322,8 @@ export function CodeEditor() {
 
         {/* Live Multi-Agent Co-Editing Button */}
         <div className="flex items-center gap-2 shrink-0 pr-2">
+          <LivePeersBadge />
+
           <button
             type="button"
             onClick={() => setIsLiveStreaming(true)}

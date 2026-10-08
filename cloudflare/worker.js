@@ -102,15 +102,43 @@ export default {
             });
           }
 
+          if (data.type === 'presence:set') {
+            // Allow a peer to announce/rename its display name after connecting
+            const peer = session.peers.get(peerId);
+            if (peer && typeof data.peerName === 'string' && data.peerName) {
+              peer.name = data.peerName;
+              broadcastToSession(session, {
+                type: 'peers:list',
+                peers: Array.from(session.peers.values()).map((p) => p.name),
+              });
+            }
+          }
+
           if (data.type === 'typing:broadcast') {
             // Live code typing broadcast (Amoeba live stepping)
             broadcastToSession(session, {
               type: 'typing:stream',
+              agentId: data.agentId || peerId,
               agentName: data.agentName || peerName,
               filePath: data.filePath,
               lineNum: data.lineNum,
               text: data.text,
               color: data.color || '#38d9a9',
+            }, peerId);
+          }
+
+          if (data.type === 'diff:broadcast') {
+            // Monaco `onDidChangeModelContent` payloads relayed verbatim so
+            // peers can render live, line-accurate ghost edits.
+            const changes = Array.isArray(data.changes) ? data.changes.slice(0, 64) : [];
+            broadcastToSession(session, {
+              type: 'diff:stream',
+              agentId: data.agentId || peerId,
+              agentName: data.agentName || peerName,
+              color: data.color || '#38d9a9',
+              filePath: data.filePath,
+              changes,
+              timestamp: data.timestamp || Date.now(),
             }, peerId);
           }
 
