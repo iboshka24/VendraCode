@@ -197,21 +197,63 @@ export const useAppStore = create<AppState>((set, get) => ({
   agentStatus: 'idle',
   setAgentStatus: (status) => set({ agentStatus: status }),
 
-  // Agent Lanes
+  // Agent Lanes (Amoeba Multiplayer Swarm)
   agentLanes: [
     {
+      id: 'alice-lane',
+      name: 'Alice',
+      model: 'Claude 3.7 Sonnet (Local CLI)',
+      provider: 'anthropic',
+      status: 'running',
+      currentTask: 'refactor the token refresh in src/auth (turn 18 · rev 41)',
+      filesEditing: ['src/auth/token.ts', 'src/net/session_store.ts'],
+      progress: 68,
+      branch: 'session/lobby-join-race',
+      messages: [],
+      avatar: 'AN',
+      color: '#f06595',
+    },
+    {
+      id: 'chen-lane',
+      name: 'Chen',
+      model: 'Codex / GPT-4o (Local CLI)',
+      provider: 'openai',
+      status: 'running',
+      currentTask: 'Rewrite the tick scheduler in session/tick-scheduler',
+      filesEditing: ['src/cart/totals.ts'],
+      progress: 42,
+      branch: 'session/tick-scheduler',
+      messages: [],
+      avatar: 'CI',
+      color: '#38d9a9',
+    },
+    {
+      id: 'bob-lane',
+      name: 'Bob',
+      model: 'Claude Code (Local CLI)',
+      provider: 'anthropic',
+      status: 'waiting',
+      currentTask: 'Inventory dupe on shard handoff · waiting for checkpoint',
+      filesEditing: ['src/lobby/join.ts'],
+      progress: 85,
+      branch: 'session/inventory-dupe',
+      messages: [],
+      avatar: 'BF',
+      color: '#4dabf7',
+    },
+    {
       id: 'user-lane',
-      name: 'You',
-      model: 'human',
+      name: 'You (Local)',
+      model: 'Vendra AI / Hermes Native',
       provider: 'custom',
       status: 'idle',
-      currentTask: 'Editing code',
+      currentTask: 'Ready in main workspace',
       filesEditing: [],
       progress: 0,
       branch: 'main',
       messages: [],
       avatar: 'IB',
-      color: '#3b82f6',
+      color: '#7c3aed',
     },
   ],
   addAgentLane: (lane) => set((s) => ({ agentLanes: [...s.agentLanes, lane] })),
@@ -222,12 +264,47 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeAgentLane: (id) => set((s) => ({ agentLanes: s.agentLanes.filter((l) => l.id !== id) })),
 
   // Sessions
-  sessions: [],
-  activeSessionId: null,
+  sessions: [
+    {
+      id: 'sess-1',
+      name: 'Fix the lobby join race',
+      branch: 'session/lobby-join-race',
+      agents: [],
+      status: 'active',
+      owner: { id: 'alice', name: 'Alice', initials: 'AN', color: '#f06595', isOnline: true },
+      createdAt: Date.now() - 3600000,
+    },
+    {
+      id: 'sess-2',
+      name: 'Rewrite the tick scheduler',
+      branch: 'session/tick-scheduler',
+      agents: [],
+      status: 'active',
+      owner: { id: 'chen', name: 'Chen', initials: 'CI', color: '#38d9a9', isOnline: true },
+      createdAt: Date.now() - 7200000,
+    },
+  ],
+  activeSessionId: 'sess-1',
   setActiveSession: (id) => set({ activeSessionId: id }),
 
   // Approvals
-  approvals: [],
+  approvals: [
+    {
+      id: 'appr-alice-1',
+      agentId: 'alice-lane',
+      agentName: 'Alice (Claude Code)',
+      action: 'git_push',
+      description: 'Run this? rev 18: git push origin session/lobby-join-race',
+      details: JSON.stringify({
+        lane: 'session/lobby-join-race',
+        files: ['src/auth/token.ts', 'src/net/session_store.ts'],
+        network: 'origin (git)',
+        action: 'commit & push'
+      }, null, 2),
+      timestamp: Date.now() - 120000,
+      status: 'pending',
+    }
+  ],
   addApproval: (req) => set((s) => ({ approvals: [...s.approvals, req] })),
   resolveApproval: (id, status) =>
     set((s) => ({

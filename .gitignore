@@ -1,6 +1,8 @@
 node_modules/
 dist/
 release/
+scratch_amoeba/
+.vendracode/
 .env
 *.log
 .DS_Store

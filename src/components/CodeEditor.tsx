@@ -1,13 +1,14 @@
 import { useRef, useCallback, useEffect } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { useAppStore } from '@/stores/appStore';
-import { X, Circle } from 'lucide-react';
+import { X, Circle, FolderOpen, Compass, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function CodeEditor() {
   const {
     openTabs, activeTabId, setActiveTab, closeTab,
-    updateTabContent, markTabClean, workspacePath, settings
+    updateTabContent, markTabClean, workspacePath, setWorkspacePath,
+    setFileTree, setActiveView, toggleChat, settings
   } = useAppStore();
   const editorRef = useRef<any>(null);
 
@@ -18,7 +19,6 @@ export function CodeEditor() {
 
     // Ctrl+S to save
     editor.addCommand(
-      // Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.KeyS
       2048 | 49, // CtrlCmd + S
       async () => {
         if (!activeTab) return;
@@ -41,6 +41,19 @@ export function CodeEditor() {
     [activeTabId, updateTabContent]
   );
 
+  const handleOpenFolder = async () => {
+    try {
+      const path = await window.vendraAPI.dialog.openDirectory();
+      if (path) {
+        setWorkspacePath(path);
+        const entries = await window.vendraAPI.fs.readDir(path);
+        setFileTree(entries);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   // Save on Ctrl+S globally
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
@@ -61,21 +74,51 @@ export function CodeEditor() {
 
   if (openTabs.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-background">
+      <div className="flex-1 flex items-center justify-center bg-background select-none">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-center"
+          className="text-center max-w-sm px-6"
         >
-          <div className="text-6xl mb-6 opacity-20">⌨</div>
-          <h2 className="text-xl font-semibold text-text-secondary mb-2">VendraCode</h2>
-          <p className="text-text-muted text-sm max-w-xs">
-            Open a folder to get started, or use the AI assistant to create files.
+          <div className="w-12 h-12 rounded-2xl bg-chip border border-border-light flex items-center justify-center mx-auto mb-4 text-text-primary shadow-lg">
+            <span className="font-bold text-lg text-accent">V</span>
+          </div>
+          <h2 className="text-base font-bold text-text-primary mb-1 tracking-tight">VendraCode IDE</h2>
+          <p className="text-text-muted text-xs leading-relaxed mb-6">
+            Multiplayer AI-Native Development Environment with The Shared Brain & Hermes agent skills.
           </p>
-          <div className="mt-6 flex flex-col gap-2 text-xs text-text-muted">
-            <span>Ctrl+O — Open Folder</span>
-            <span>Ctrl+S — Save File</span>
-            <span>Ctrl+Shift+P — Command Palette</span>
+
+          <div className="flex flex-col gap-2 items-center">
+            <button
+              type="button"
+              onClick={handleOpenFolder}
+              className="btn btn-primary w-48 text-xs justify-center"
+            >
+              <FolderOpen size={14} />
+              <span>Open Repository</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView('mission-control')}
+              className="btn btn-ghost w-48 text-xs justify-center"
+            >
+              <Compass size={14} />
+              <span>Mission Control</span>
+            </button>
+            <button
+              type="button"
+              onClick={toggleChat}
+              className="btn btn-ghost w-48 text-xs justify-center"
+            >
+              <Sparkles size={14} className="text-accent" />
+              <span>AI Agent Prompt</span>
+            </button>
+          </div>
+
+          <div className="mt-8 pt-4 border-t border-border flex justify-center gap-4 text-[10px] text-text-muted font-mono">
+            <span>Ctrl+O · Open</span>
+            <span>Ctrl+S · Save</span>
+            <span>Ctrl+Shift+P · Palette</span>
           </div>
         </motion.div>
       </div>
@@ -83,42 +126,46 @@ export function CodeEditor() {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-w-0">
+    <div className="flex-1 flex flex-col min-w-0 bg-background">
       {/* Tab Bar */}
-      <div className="flex h-9 bg-surface border-b border-border overflow-x-auto">
+      <div className="flex h-8 bg-bgtitle border-b border-border overflow-x-auto select-none">
         <AnimatePresence>
-          {openTabs.map((tab) => (
-            <motion.div
-              key={tab.id}
-              initial={{ opacity: 0, width: 0 }}
-              animate={{ opacity: 1, width: 'auto' }}
-              exit={{ opacity: 0, width: 0 }}
-              className={`flex items-center gap-2 px-3 text-sm cursor-pointer border-r border-border
-                shrink-0 min-w-0 group transition-colors
-                ${tab.id === activeTabId
-                  ? 'bg-background text-text-primary border-t-2 border-t-primary'
-                  : 'bg-surface text-text-secondary hover:bg-surface-hover'
-                }`}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              <span className="truncate max-w-[120px]">{tab.name}</span>
-              {tab.isDirty && (
-                <Circle size={8} className="text-warning fill-warning shrink-0" />
-              )}
-              <button
-                className="opacity-0 group-hover:opacity-100 hover:bg-border rounded p-0.5 transition-opacity shrink-0"
-                onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+          {openTabs.map((tab) => {
+            const isActive = tab.id === activeTabId;
+            return (
+              <motion.div
+                key={tab.id}
+                initial={{ opacity: 0, width: 0 }}
+                animate={{ opacity: 1, width: 'auto' }}
+                exit={{ opacity: 0, width: 0 }}
+                className={`flex items-center gap-2 px-3 text-xs cursor-pointer border-r border-border
+                  shrink-0 min-w-0 group transition-all font-mono
+                  ${isActive
+                    ? 'bg-background text-text-primary border-t-2 border-t-pop font-medium'
+                    : 'bg-bgtitle text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                  }`}
+                onClick={() => setActiveTab(tab.id)}
               >
-                <X size={12} />
-              </button>
-            </motion.div>
-          ))}
+                <span className="truncate max-w-[130px]">{tab.name}</span>
+                {tab.isDirty && (
+                  <Circle size={6} className="text-warning fill-warning shrink-0" />
+                )}
+                <button
+                  type="button"
+                  className="opacity-0 group-hover:opacity-100 hover:bg-chip rounded p-0.5 transition-opacity shrink-0"
+                  onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                >
+                  <X size={11} />
+                </button>
+              </motion.div>
+            );
+          })}
         </AnimatePresence>
       </div>
 
-      {/* Editor */}
+      {/* Monaco Editor */}
       {activeTab && (
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 bg-background">
           <Editor
             key={activeTab.id}
             height="100%"
@@ -130,7 +177,7 @@ export function CodeEditor() {
             options={{
               minimap: { enabled: settings.minimap },
               fontSize: settings.fontSize,
-              fontFamily: settings.fontFamily,
+              fontFamily: '"Geist Mono", "JetBrains Mono", Consolas, monospace',
               wordWrap: settings.wordWrap ? 'on' : 'off',
               scrollBeyondLastLine: false,
               smoothScrolling: true,

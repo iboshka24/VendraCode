@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { FileEntry } from '@/types/index';
 import { getFileIcon } from '@/utils/providers';
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, RefreshCw, Search, FolderPlus } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, RefreshCw, Search, FolderPlus, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function FileTreeItem({ entry, depth }: { entry: FileEntry; depth: number }) {
@@ -45,23 +45,23 @@ function FileTreeItem({ entry, depth }: { entry: FileEntry; depth: number }) {
   };
 
   const isSelected = activeTabId === entry.path;
-  const paddingLeft = depth * 16;
+  const paddingLeft = depth * 14;
   
   if (entry.isDirectory) {
     return (
       <div>
         <div 
           onClick={handleFolderClick}
-          className="flex items-center py-1 px-2 cursor-pointer hover:bg-surface-hover text-text-secondary select-none"
-          style={{ paddingLeft: `${paddingLeft + 8}px` }}
+          className="flex items-center py-1 px-2 cursor-pointer hover:bg-surface-hover text-text-secondary select-none transition-colors rounded-sm"
+          style={{ paddingLeft: `${paddingLeft + 6}px` }}
         >
-          <span className="mr-1 text-muted">
-            {entry.isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <span className="mr-1 text-text-muted">
+            {entry.isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </span>
-          <span className="mr-2 text-primary">
-            {entry.isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />}
+          <span className="mr-1.5 text-text-secondary">
+            {entry.isExpanded ? <FolderOpen size={13} /> : <Folder size={13} />}
           </span>
-          <span className="text-sm truncate">{entry.name}</span>
+          <span className="text-xs truncate font-medium">{entry.name}</span>
         </div>
         <AnimatePresence>
           {entry.isExpanded && entry.children && (
@@ -69,7 +69,7 @@ function FileTreeItem({ entry, depth }: { entry: FileEntry; depth: number }) {
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.15 }}
+              transition={{ duration: 0.12 }}
               className="overflow-hidden"
             >
               {entry.children.map(child => (
@@ -83,28 +83,33 @@ function FileTreeItem({ entry, depth }: { entry: FileEntry; depth: number }) {
   }
 
   const { icon, color } = getFileIcon(entry.name);
-  
-    const lock = activeLocks ? (activeLocks[entry.path] || activeLocks[entry.name]) : null;
+  const lock = activeLocks ? (activeLocks[entry.path] || activeLocks[entry.name]) : null;
 
-    return (
-      <div
-        onClick={handleFileClick}
-        className={`flex items-center justify-between py-1 px-2 cursor-pointer text-text-secondary select-none ${
-          isSelected ? 'bg-primary/10 border-l-2 border-primary text-text-primary' : 'hover:bg-surface-hover border-l-2 border-transparent'
-        }`}
-        style={{ paddingLeft: `${paddingLeft + 8}px` }}
-      >
-        <div className="flex items-center min-w-0">
-          <span className="ml-[14px] mr-2 text-xs font-mono font-bold" style={{ color }}>{icon}</span>
-          <span className={`text-sm truncate ${isSelected ? 'text-text-primary' : ''}`}>{entry.name}</span>
-        </div>
-        {lock && (
-          <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary border border-primary/30 font-mono shrink-0 animate-pulse" title={`Currently edited by ${lock.agentName}`}>
-            {lock.agentName}
-          </span>
-        )}
+  return (
+    <div
+      onClick={handleFileClick}
+      className={`flex items-center justify-between py-1 px-2 cursor-pointer text-text-secondary select-none transition-all rounded-sm ${
+        isSelected 
+          ? 'bg-chip text-text-primary border-l-2 border-pop font-medium' 
+          : 'hover:bg-surface-hover hover:text-text-primary border-l-2 border-transparent'
+      }`}
+      style={{ paddingLeft: `${paddingLeft + 6}px` }}
+    >
+      <div className="flex items-center min-w-0">
+        <span className="ml-[12px] mr-2 text-[11px] font-mono font-bold" style={{ color }}>{icon}</span>
+        <span className={`text-xs truncate ${isSelected ? 'text-text-primary' : ''}`}>{entry.name}</span>
       </div>
-    );
+      {lock && (
+        <span 
+          className="ml-1 text-[9px] px-1.5 py-0.2 rounded bg-ok/15 text-ok border border-ok/30 font-mono shrink-0 flex items-center gap-1"
+          title={`Advisory Lock: ${lock.agentName}`}
+        >
+          <span className="w-1 h-1 rounded-full bg-ok animate-pulse" />
+          {lock.agentName}
+        </span>
+      )}
+    </div>
+  );
 }
 
 export function FileExplorer() {
@@ -138,33 +143,36 @@ export function FileExplorer() {
   };
 
   return (
-    <aside className="w-64 shrink-0 flex flex-col h-full bg-surface border-r border-border text-text-secondary">
-      <div className="flex items-center justify-between p-3 border-b border-border">
-        <h2 className="text-xs font-semibold tracking-wider text-muted">EXPLORER</h2>
+    <aside className="w-60 shrink-0 flex flex-col h-full bg-bgside border-r border-border text-text-secondary select-none">
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-border bg-bgtitle">
+        <span className="text-[10px] font-bold tracking-wider uppercase text-text-muted">FILES</span>
         <div className="flex gap-1">
           <button 
+            type="button"
             onClick={openFolder}
-            className="p-1 hover:bg-surface-hover rounded text-muted hover:text-text-primary transition-colors"
+            className="btn btn-ghost h-6 w-6 p-0"
             title="Open Folder"
           >
-            <FolderPlus size={14} />
+            <FolderPlus size={13} />
           </button>
           <button 
+            type="button"
             onClick={refreshDirectory}
-            className="p-1 hover:bg-surface-hover rounded text-muted hover:text-text-primary transition-colors"
-            title="Refresh"
+            className="btn btn-ghost h-6 w-6 p-0"
+            title="Refresh Directory"
           >
-            <RefreshCw size={14} />
+            <RefreshCw size={13} />
           </button>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto py-2">
+      <div className="flex-1 overflow-y-auto py-1 px-1">
         {fileTree.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted px-4 text-center">
-            <p className="text-sm mb-4">No folder opened</p>
+          <div className="flex flex-col items-center justify-center h-full text-text-muted px-4 text-center">
+            <p className="text-xs mb-3 text-text-secondary">No repository opened</p>
             <button 
+              type="button"
               onClick={openFolder}
-              className="px-4 py-2 bg-primary text-white text-sm rounded hover:bg-primary/90 transition-colors"
+              className="btn btn-primary text-xs"
             >
               Open Folder
             </button>

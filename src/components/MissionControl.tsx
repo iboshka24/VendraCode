@@ -3,7 +3,8 @@ import { useAppStore } from '@/stores/appStore';
 import { AgentLane, Session, ApprovalRequest, LLMProvider } from '@/types/index';
 import { 
   Play, Pause, Square, Plus, AlertTriangle, CheckCircle, Clock, 
-  GitBranch, File, Users, Bot, Zap
+  GitBranch, File, Users, Bot, Zap, Shield, GitCommit, ArrowUpRight,
+  Sparkles, Check, CheckCheck, RefreshCw, Terminal, Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -22,13 +23,16 @@ export const MissionControl: React.FC = () => {
 
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
   const [newAgentName, setNewAgentName] = useState('');
-  const [newAgentProvider, setNewAgentProvider] = useState<LLMProvider>('openai');
-  const [newAgentModel, setNewAgentModel] = useState('gpt-4o');
+  const [newAgentProvider, setNewAgentProvider] = useState<LLMProvider>('anthropic');
+  const [newAgentModel, setNewAgentModel] = useState('claude-3-7-sonnet');
+  const [hiveEnabled, setHiveEnabled] = useState(true);
+  const [swarmCap, setSwarmCap] = useState(4);
+  const [sharedGoal, setSharedGoal] = useState('Refactor authentication flow and coordinate lobby state with zero merge conflicts');
 
+  // Computed file overlaps
   const fileOverlaps = useMemo(() => {
     const map: Record<string, string[]> = {};
     
-    // Check files from agents
     agentLanes.forEach(agent => {
       agent.filesEditing.forEach(file => {
         if (!map[file]) map[file] = [];
@@ -36,7 +40,6 @@ export const MissionControl: React.FC = () => {
       });
     });
 
-    // Check files from activeLocks (CLI agents like agy, cline, opencode)
     if (activeLocks) {
       Object.entries(activeLocks).forEach(([file, lock]) => {
         if (!map[file]) map[file] = [];
@@ -51,33 +54,26 @@ export const MissionControl: React.FC = () => {
     e.preventDefault();
     if (!newAgentName.trim()) return;
     
+    const colors = ['#f06595', '#4dabf7', '#38d9a9', '#ffa94d', '#b197fc'];
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+
     addAgentLane({
       id: `agent-${Date.now()}`,
       name: newAgentName.trim(),
       model: newAgentModel,
       provider: newAgentProvider,
       status: 'idle',
-      currentTask: 'Ready for new task',
+      currentTask: 'Ready for new task in session',
       filesEditing: [],
       progress: 0,
-      branch: 'main',
+      branch: 'session/new-feature',
       messages: [],
       avatar: newAgentName.substring(0, 2).toUpperCase(),
-      color: '#' + Math.floor(Math.random()*16777215).toString(16),
+      color: randomColor,
     });
     
     setIsCreatingAgent(false);
     setNewAgentName('');
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'running': return 'text-success';
-      case 'waiting': return 'text-warning';
-      case 'error': return 'text-danger';
-      case 'completed': return 'text-accent';
-      default: return 'text-text-muted';
-    }
   };
 
   const handleLaunchCLI = async (cliBin: string, cliName: string) => {
@@ -85,7 +81,7 @@ export const MissionControl: React.FC = () => {
     addAgentLane({
       id: agentId,
       name: cliName,
-      model: `${cliBin} CLI Process`,
+      model: `${cliBin} CLI Native`,
       provider: 'custom',
       status: 'running',
       currentTask: `Active ${cliName} process coordinating with Brain`,
@@ -94,10 +90,10 @@ export const MissionControl: React.FC = () => {
       branch: 'main',
       messages: [],
       avatar: cliBin.substring(0, 2).toUpperCase(),
-      color: '#8b5cf6',
+      color: '#b197fc',
     });
 
-    if (window.vendraAPI) {
+    if (window.vendraAPI?.cli) {
       await window.vendraAPI.cli.spawnAgent({
         agentId,
         cliBin,
@@ -106,165 +102,286 @@ export const MissionControl: React.FC = () => {
     }
   };
 
+  const repoName = workspacePath ? workspacePath.split('/').pop() : 'northlight/abyssal-drift-server';
+
   return (
-    <div className="flex-1 overflow-auto bg-background p-6 text-text-primary h-full">
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Zap className="text-primary" />
-          Mission Control
-        </h1>
-        <button className="flex items-center gap-2 px-4 py-2 bg-surface hover:bg-surface-hover border border-border rounded-lg transition-colors">
-          <Plus size={18} />
-          New Session
-        </button>
+    <div className="flex-1 overflow-y-auto bg-background p-6 text-text-primary h-full select-none">
+      {/* ─── Amoeba Header & Git Snapshots Bar ─────────────────────── */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between pb-5 mb-6 border-b border-border gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold tracking-tight text-text-primary flex items-center gap-2">
+              <span className="text-accent">amoeba</span>
+              <span className="text-text-muted">/</span>
+              <span>native harness</span>
+            </h1>
+            <span className="amoeba-chip text-text-secondary font-mono text-[11px]">
+              {repoName}
+            </span>
+          </div>
+          <p className="text-xs text-text-secondary mt-1">
+            One layer to coordinate any agent, any model. 40% cheaper. Real-time sync.
+          </p>
+        </div>
+
+        {/* Live Git Snapshots Indicator */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-bgside border border-border text-xs">
+            <span className="dotpulse" />
+            <div className="flex flex-col">
+              <span className="font-semibold text-text-primary text-[11px] leading-tight flex items-center gap-1">
+                GIT SNAPSHOTS <span className="text-text-muted font-normal">Every 5s</span>
+              </span>
+              <span className="text-[10px] text-ok flex items-center gap-1">
+                ✓ Team up to date · Zero conflicts
+              </span>
+            </div>
+          </div>
+
+          <button 
+            type="button"
+            onClick={() => setIsCreatingAgent(true)}
+            className="btn btn-primary"
+          >
+            <Plus size={14} />
+            <span>New Lane</span>
+          </button>
+        </div>
       </div>
 
-      {fileOverlaps.length > 0 && (
-        <div className="mb-6 p-4 bg-warning/10 border border-warning/30 rounded-lg flex items-start gap-3 text-warning">
-          <AlertTriangle className="shrink-0 mt-0.5" size={20} />
-          <div>
-            <h3 className="font-semibold mb-1">File Overlap Warning</h3>
-            <ul className="list-disc pl-5 text-sm space-y-1">
+      {/* ─── Overlap Warnings Banner ────────────────────────────────── */}
+      {fileOverlaps.length > 0 ? (
+        <div className="mb-6 p-4 bg-warning/10 border border-warning/30 rounded-xl flex items-start gap-3 text-warning">
+          <AlertTriangle className="shrink-0 mt-0.5 text-warning" size={18} />
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-xs text-warning tracking-wide">
+                OVERLAP WARNINGS DETECTED
+              </h3>
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-warning/20 font-mono">
+                {fileOverlaps.length} collisions
+              </span>
+            </div>
+            <p className="text-xs text-text-secondary mt-1 mb-2">
+              Amoeba compares branches, file paths, planned work and task descriptions, and warns about possible overlap before a prompt runs.
+            </p>
+            <div className="space-y-1">
               {fileOverlaps.map(([file, agents]) => (
-                <li key={file}>
-                  <span className="font-mono text-text-primary">{file}</span> is being edited by {agents.join(', ')}
-                </li>
+                <div key={file} className="text-xs flex items-center gap-2 font-mono bg-bgside/80 px-2.5 py-1 rounded border border-warning/20">
+                  <File size={12} className="text-warning" />
+                  <span className="text-text-primary">{file}</span>
+                  <span className="text-text-muted">is being edited by</span>
+                  <span className="text-warning font-semibold">{agents.join(', ')}</span>
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
+        </div>
+      ) : (
+        <div className="mb-6 px-4 py-2.5 bg-bgside border border-border rounded-xl flex items-center justify-between text-xs text-text-secondary">
+          <div className="flex items-center gap-2">
+            <CheckCheck size={16} className="text-ok" />
+            <span>Advisory file locks active — zero collisions across all agent worktrees.</span>
+          </div>
+          <span className="font-mono text-[10px] text-text-muted">
+            Brain status: SYNCED
+          </span>
         </div>
       )}
 
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            <Bot size={20} />
-            Active Agents
-          </h2>
-          <div className="flex items-center gap-2">
-            {/* Quick Launch Buttons for detected Local CLIs */}
-            {localCLIs && localCLIs.filter(c => c.isInstalled).map(cli => (
-              <button
-                key={cli.id}
-                onClick={() => handleLaunchCLI(cli.bin, cli.name)}
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 bg-surface hover:bg-surface-hover border border-border rounded-lg text-text-primary transition-colors font-mono"
-                title={`Launch ${cli.name} lane`}
-              >
-                <Plus size={12} className="text-primary" />
-                {cli.bin}
-              </button>
-            ))}
-
-            <button 
-              onClick={() => setIsCreatingAgent(true)}
-              className="flex items-center gap-2 text-sm px-3 py-1.5 bg-primary/20 text-primary hover:bg-primary/30 rounded-lg transition-colors"
+      {/* ─── Swarm / Hive Controls Bar ─────────────────────────────── */}
+      <div className="mb-6 p-3 bg-bgside border border-border rounded-xl flex flex-wrap items-center justify-between gap-4 text-xs">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 font-semibold text-text-primary">
+            <Layers size={16} className="text-accent" />
+            <span>Swarm Hive</span>
+          </div>
+          <div className="flex items-center gap-1 bg-chip p-0.5 rounded-lg border border-border">
+            <button
+              type="button"
+              onClick={() => setHiveEnabled(true)}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
+                hiveEnabled ? 'bg-pop text-popfg font-semibold shadow' : 'text-text-muted hover:text-text-primary'
+              }`}
             >
-              <Plus size={16} />
-              Create Custom Agent
+              On
+            </button>
+            <button
+              type="button"
+              onClick={() => setHiveEnabled(false)}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
+                !hiveEnabled ? 'bg-pop text-popfg font-semibold shadow' : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              Off
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5 ml-2">
+            <span className="text-text-muted">Agent Cap:</span>
+            <button 
+              type="button" 
+              onClick={() => setSwarmCap(Math.max(1, swarmCap - 1))}
+              className="btn btn-ghost h-6 w-6 p-0 font-bold"
+            >
+              -
+            </button>
+            <span className="font-mono font-semibold px-2">{swarmCap}</span>
+            <button 
+              type="button" 
+              onClick={() => setSwarmCap(Math.min(16, swarmCap + 1))}
+              className="btn btn-ghost h-6 w-6 p-0 font-bold"
+            >
+              +
             </button>
           </div>
         </div>
 
+        {/* Local CLI Quick Launchers */}
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-text-muted">Spawn Local Process:</span>
+          {localCLIs && localCLIs.filter(c => c.isInstalled).map(cli => (
+            <button
+              key={cli.id}
+              type="button"
+              onClick={() => handleLaunchCLI(cli.bin, cli.name)}
+              className="btn btn-ghost text-xs h-7 font-mono"
+              title={`Spawn ${cli.name} lane inside worktree`}
+            >
+              <Plus size={12} className="text-accent" />
+              {cli.bin}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ─── Create Custom Lane Form ─────────────────────────────────── */}
+      <AnimatePresence>
         {isCreatingAgent && (
           <motion.form 
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-6 p-4 bg-surface border border-border rounded-xl flex gap-4 items-end"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mb-6 p-4 bg-surface border border-border-light rounded-xl flex flex-wrap gap-3 items-end overflow-hidden"
             onSubmit={handleCreateAgent}
           >
-            <div className="flex-1">
-              <label className="block text-xs text-text-muted mb-1">Agent Name</label>
+            <div className="flex-1 min-w-[200px]">
+              <label className="block text-[11px] text-text-muted mb-1 font-medium">Teammate / Agent Name</label>
               <input 
                 type="text" 
                 value={newAgentName}
                 onChange={e => setNewAgentName(e.target.value)}
-                className="w-full bg-background border border-border rounded p-2 text-sm focus:border-primary outline-none"
-                placeholder="e.g. Frontend Wizard"
+                className="vc-input"
+                placeholder="e.g. Devon or Frontend Specialist"
                 autoFocus
               />
             </div>
-            <div className="w-48">
-              <label className="block text-xs text-text-muted mb-1">Provider</label>
+            <div className="w-44">
+              <label className="block text-[11px] text-text-muted mb-1 font-medium">Provider</label>
               <select 
                 value={newAgentProvider}
                 onChange={e => setNewAgentProvider(e.target.value as LLMProvider)}
-                className="w-full bg-background border border-border rounded p-2 text-sm focus:border-primary outline-none"
+                className="vc-input"
               >
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="nvidia">NVIDIA</option>
-                <option value="custom">Custom</option>
+                <option value="anthropic">Anthropic (Claude)</option>
+                <option value="openai">OpenAI / Codex</option>
+                <option value="nvidia">NVIDIA NIM</option>
+                <option value="custom">Custom Native</option>
               </select>
             </div>
-            <div className="w-48">
-              <label className="block text-xs text-text-muted mb-1">Model</label>
+            <div className="w-44">
+              <label className="block text-[11px] text-text-muted mb-1 font-medium">Model</label>
               <input 
                 type="text" 
                 value={newAgentModel}
                 onChange={e => setNewAgentModel(e.target.value)}
-                className="w-full bg-background border border-border rounded p-2 text-sm focus:border-primary outline-none"
+                className="vc-input"
               />
             </div>
             <div className="flex gap-2">
-              <button type="submit" className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded font-medium transition-colors">
-                Add
+              <button type="submit" className="btn btn-primary h-8">
+                Add Lane
               </button>
-              <button type="button" onClick={() => setIsCreatingAgent(false)} className="px-4 py-2 bg-surface hover:bg-surface-hover border border-border rounded transition-colors">
+              <button type="button" onClick={() => setIsCreatingAgent(false)} className="btn btn-ghost h-8">
                 Cancel
               </button>
             </div>
           </motion.form>
         )}
+      </AnimatePresence>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {/* ─── Amoeba Lanes Grid ──────────────────────────────────────── */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-bold tracking-wide uppercase text-text-secondary flex items-center gap-2">
+            <span>Lanes in Mission Control</span>
+            <span className="text-[10px] text-text-muted font-normal lowercase font-mono">
+              ({agentLanes.length} active)
+            </span>
+          </h2>
+          <span className="text-xs text-text-muted">
+            Everyone’s agents, plans and changes in one place
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
           <AnimatePresence>
             {agentLanes.map(agent => (
               <motion.div
                 key={agent.id}
                 layout
-                initial={{ opacity: 0, scale: 0.95 }}
+                initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className={`p-4 bg-surface rounded-xl border ${
-                  agent.status === 'running' 
-                    ? 'border-t-2 border-t-primary border-border hover:border-border-light shadow-[0_0_15px_rgba(124,58,237,0.15)]' 
-                    : 'border-border hover:border-border-light'
-                } transition-all flex flex-col h-full`}
+                exit={{ opacity: 0, scale: 0.96 }}
+                className="p-3.5 bg-bgside rounded-xl border border-border hover:border-border-light transition-all flex flex-col justify-between shadow-sm relative group"
               >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <div 
-                      className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shadow-sm"
-                      style={{ backgroundColor: agent.color }}
-                    >
-                      {agent.avatar}
+                {/* Lane Top Header */}
+                <div>
+                  <div className="flex items-start justify-between mb-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <div 
+                        className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs text-white shadow-sm ring-2 ring-black"
+                        style={{ backgroundColor: agent.color }}
+                      >
+                        {agent.avatar}
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-text-primary text-xs leading-tight flex items-center gap-1.5">
+                          {agent.name}
+                          {agent.id === 'user-lane' && (
+                            <span className="text-[9px] bg-primary/20 text-primary px-1 rounded">LOCAL</span>
+                          )}
+                        </h3>
+                        <p className="text-[10px] text-text-muted font-mono">{agent.model}</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-semibold text-text-primary leading-tight">{agent.name}</h3>
-                      <p className="text-xs text-text-muted">{agent.model}</p>
-                    </div>
-                  </div>
-                  <div className={`flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full bg-background border border-border ${getStatusColor(agent.status)}`}>
-                    {agent.status === 'running' && <span className="w-2 h-2 rounded-full bg-success animate-pulse" />}
-                    {agent.status === 'waiting' && <Clock size={12} />}
-                    {agent.status === 'idle' && <Square size={12} />}
-                    {agent.status === 'error' && <AlertTriangle size={12} />}
-                    <span className="capitalize">{agent.status}</span>
-                  </div>
-                </div>
 
-                <div className="flex-1 mb-4">
-                  <p className="text-sm text-text-secondary line-clamp-2 mb-2">
+                    {/* Status badge */}
+                    <div className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-chip border border-border text-text-secondary">
+                      {agent.status === 'running' && <span className="w-1.5 h-1.5 rounded-full bg-ok animate-pulse" />}
+                      {agent.status === 'waiting' && <Clock size={10} className="text-warning" />}
+                      <span className="capitalize">{agent.status}</span>
+                    </div>
+                  </div>
+
+                  {/* Branch Pill */}
+                  <div className="flex items-center gap-1 text-[10px] text-text-muted font-mono bg-chip/60 px-2 py-1 rounded border border-border/80 mb-2 truncate">
+                    <GitBranch size={10} />
+                    <span className="truncate">{agent.branch}</span>
+                  </div>
+
+                  {/* Current Task / Plan */}
+                  <div className="text-xs text-text-secondary leading-relaxed line-clamp-3 mb-3">
                     {agent.currentTask}
-                  </p>
-                  
+                  </div>
+
+                  {/* Files being edited */}
                   {agent.filesEditing.length > 0 && (
-                    <div className="space-y-1 mt-3">
-                      <div className="text-xs text-text-muted flex items-center gap-1 mb-1.5">
-                        <File size={12} /> Editing Files
+                    <div className="space-y-1 mb-3">
+                      <div className="text-[10px] text-text-muted font-semibold uppercase tracking-wider">
+                        Files in Worktree:
                       </div>
                       {agent.filesEditing.map(file => (
-                        <div key={file} className="text-xs bg-background/50 border border-border px-2 py-1 rounded font-mono truncate">
+                        <div key={file} className="text-[10px] font-mono text-accent bg-bgdeep px-1.5 py-0.5 rounded border border-border truncate">
                           {file}
                         </div>
                       ))}
@@ -272,43 +389,40 @@ export const MissionControl: React.FC = () => {
                   )}
                 </div>
 
-                <div className="mt-auto">
+                {/* Progress bar & controls */}
+                <div className="mt-3 pt-2.5 border-t border-border/80">
                   {agent.status === 'running' && (
-                    <div className="w-full bg-background rounded-full h-1.5 mb-3 overflow-hidden">
+                    <div className="w-full bg-chip rounded-full h-1 mb-2.5 overflow-hidden">
                       <div 
-                        className="bg-primary h-1.5 rounded-full transition-all duration-300"
+                        className="bg-ok h-1 rounded-full transition-all duration-300"
                         style={{ width: `${agent.progress}%` }}
                       />
                     </div>
                   )}
-                  
-                  <div className="flex items-center justify-between pt-3 border-t border-border">
-                    <div className="flex items-center gap-1.5 text-xs text-text-muted bg-background px-2 py-1 rounded">
-                      <GitBranch size={12} />
-                      <span className="truncate max-w-[100px]">{agent.branch}</span>
-                    </div>
-                    
-                    <div className="flex gap-1.5">
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-text-muted font-mono">
+                      {agent.status === 'running' ? `${agent.progress}% done` : 'Standby'}
+                    </span>
+
+                    <div className="flex gap-1">
                       {agent.status === 'running' ? (
                         <button 
-                          onClick={() => {
-                            updateAgentLane(agent.id, { status: 'idle' });
-                            if (agent.id.startsWith('cli-') && window.vendraAPI) {
-                              window.vendraAPI.cli.stopAgent(agent.id);
-                            }
-                          }}
-                          className="p-1.5 text-text-muted hover:text-warning hover:bg-warning/10 rounded transition-colors"
-                          title="Pause Agent"
+                          type="button"
+                          onClick={() => updateAgentLane(agent.id, { status: 'idle' })}
+                          className="btn btn-ghost h-6 px-2 text-xs"
+                          title="Pause"
                         >
-                          <Pause size={16} />
+                          <Pause size={12} />
                         </button>
                       ) : (
                         <button 
+                          type="button"
                           onClick={() => updateAgentLane(agent.id, { status: 'running' })}
-                          className="p-1.5 text-text-muted hover:text-success hover:bg-success/10 rounded transition-colors"
-                          title="Start Agent"
+                          className="btn btn-ghost h-6 px-2 text-xs"
+                          title="Resume"
                         >
-                          <Play size={16} />
+                          <Play size={12} />
                         </button>
                       )}
                     </div>
@@ -320,59 +434,74 @@ export const MissionControl: React.FC = () => {
         </div>
       </div>
 
+      {/* ─── Amoeba Approval Gates ─────────────────────────────────── */}
       <div className="mb-8">
-        <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">
-          <AlertTriangle className="text-warning" size={20} />
-          Pending Approvals
-          {approvals.filter(a => a.status === 'pending').length > 0 && (
-            <span className="bg-warning text-warning-900 text-xs px-2 py-0.5 rounded-full font-bold ml-2">
-              {approvals.filter(a => a.status === 'pending').length}
-            </span>
-          )}
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-bold tracking-wide uppercase text-text-secondary flex items-center gap-2">
+            <Shield size={16} className="text-warning" />
+            <span>Approval Gate</span>
+            {approvals.filter(a => a.status === 'pending').length > 0 && (
+              <span className="bg-warning text-bgdeep text-[10px] px-1.5 py-0.2 rounded font-bold">
+                {approvals.filter(a => a.status === 'pending').length} waiting
+              </span>
+            )}
+          </h2>
+          <span className="text-xs text-text-muted">
+            Each person maintains approval gates for agent git pushes and disk writes
+          </span>
+        </div>
 
         <div className="space-y-3">
           {approvals.filter(a => a.status === 'pending').length === 0 ? (
-            <div className="p-8 text-center text-text-muted border border-border border-dashed rounded-xl bg-surface/50">
-              <CheckCircle size={32} className="mx-auto mb-3 opacity-20" />
-              <p>No pending approvals</p>
+            <div className="p-6 text-center text-text-muted border border-border border-dashed rounded-xl bg-bgside/40">
+              <CheckCircle size={24} className="mx-auto mb-2 opacity-30 text-ok" />
+              <p className="text-xs">All agent requests approved. No pending gate authorizations.</p>
             </div>
           ) : (
             <AnimatePresence>
               {approvals.filter(a => a.status === 'pending').map(approval => (
                 <motion.div 
                   key={approval.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  className="p-4 bg-surface border border-border rounded-xl flex items-center gap-4"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="p-4 bg-bgside border border-border-light rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md"
                 >
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-semibold text-text-primary">{approval.agentName}</span>
-                      <span className="text-xs text-text-muted px-2 py-0.5 bg-background rounded-full border border-border capitalize">
-                        {approval.action.replace('_', ' ')}
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="font-semibold text-xs text-text-primary">{approval.agentName}</span>
+                      <span className="text-[10px] text-text-muted font-mono px-2 py-0.5 bg-chip rounded border border-border uppercase">
+                        {approval.action}
+                      </span>
+                      <span className="text-[10px] text-text-hint font-mono">
+                        {new Date(approval.timestamp).toLocaleTimeString()}
                       </span>
                     </div>
-                    <p className="text-sm text-text-secondary">{approval.description}</p>
+                    <p className="text-xs text-text-secondary font-mono">{approval.description}</p>
                     {approval.details && (
-                      <div className="mt-2 text-xs font-mono text-text-muted bg-background p-2 rounded border border-border overflow-x-auto">
+                      <div className="mt-2 text-[11px] font-mono text-text-muted bg-bgdeep p-2 rounded border border-border overflow-x-auto">
                         {approval.details}
                       </div>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  
+                  {/* Tactile Approve / Deny Buttons */}
+                  <div className="flex items-center gap-2 shrink-0">
                     <button 
+                      type="button"
                       onClick={() => resolveApproval(approval.id, 'denied')}
-                      className="px-3 py-1.5 text-sm text-danger hover:bg-danger/10 border border-danger/30 hover:border-danger rounded-lg transition-colors flex items-center gap-1.5"
+                      className="btn btn-danger text-xs h-8"
                     >
-                      <Square size={14} /> Deny
+                      <Square size={12} />
+                      Deny
                     </button>
                     <button 
+                      type="button"
                       onClick={() => resolveApproval(approval.id, 'approved')}
-                      className="px-3 py-1.5 text-sm text-success hover:bg-success/10 border border-success/30 hover:border-success rounded-lg transition-colors flex items-center gap-1.5"
+                      className="btn btn-success text-xs h-8"
                     >
-                      <CheckCircle size={14} /> Approve
+                      <Check size={14} />
+                      Approve
                     </button>
                   </div>
                 </motion.div>
@@ -382,45 +511,85 @@ export const MissionControl: React.FC = () => {
         </div>
       </div>
 
-      {/* Shared Brain Coordination Feed */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            <Zap className="text-primary" size={20} />
-            The Shared Brain — Live Coordination Stream
-          </h2>
-          <span className="text-xs text-text-muted font-mono">
-            Synced with .vendracode/brain.json
-          </span>
+      {/* ─── The Shared Brain: Pinned Files & Live Stream ────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        {/* Brain Memories */}
+        <div className="p-4 bg-bgside border border-border rounded-xl">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-bold tracking-wide uppercase text-text-secondary flex items-center gap-2">
+              <Zap size={14} className="text-accent" />
+              <span>The Shared Brain · Pinned Memories</span>
+            </h3>
+            <span className="text-[10px] text-text-muted font-mono">3 pinned</span>
+          </div>
+
+          <div className="space-y-2">
+            <div className="p-2.5 bg-bgdeep rounded-lg border border-border text-xs">
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-mono text-accent text-[11px]">src/lobby/join.ts · 8a13c2e</span>
+                <span className="text-[10px] text-text-hint">Alice · 2m ago</span>
+              </div>
+              <p className="text-text-secondary text-[11px]">
+                the seating path is pickOpenSlot, reserveSlot, retryJoin
+              </p>
+            </div>
+
+            <div className="p-2.5 bg-bgdeep rounded-lg border border-border text-xs">
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-mono text-accent text-[11px]">src/cart/totals.ts · 4f19b7d</span>
+                <span className="text-[10px] text-text-hint">Chen · 8m ago</span>
+              </div>
+              <p className="text-text-secondary text-[11px]">
+                cart totals recompute on promo change, do not cache
+              </p>
+            </div>
+
+            <div className="p-2.5 bg-bgdeep rounded-lg border border-border text-xs">
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-mono text-accent text-[11px]">src/net/session_store.ts · 8a13c2e</span>
+                <span className="text-[10px] text-text-hint">Alice · 1h ago</span>
+              </div>
+              <p className="text-text-secondary text-[11px]">
+                reserveSlot() writes without comparing, that is the bug
+              </p>
+            </div>
+          </div>
         </div>
 
-        <div className="bg-surface border border-border rounded-xl p-4 space-y-2 max-h-60 overflow-y-auto">
-          {brainActions.length === 0 ? (
-            <div className="text-sm text-text-muted text-center py-6">
-              Agents and CLIs (agy, cline, opencode) automatically stream their file locks and thoughts here.
-            </div>
-          ) : (
-            brainActions.map((act) => (
-              <div key={act.id} className="text-xs flex items-center justify-between p-2 rounded bg-background border border-border/60">
-                <div className="flex items-center gap-2">
-                  <span className="px-1.5 py-0.5 rounded bg-primary/20 text-primary font-mono font-medium">
-                    {act.agentName}
-                  </span>
-                  <span className="text-text-primary font-medium">{act.action}</span>
-                  {act.targetFile && (
-                    <span className="font-mono text-text-muted">({act.targetFile})</span>
-                  )}
-                  <span className="text-text-secondary">{act.summary}</span>
-                </div>
-                <span className="text-[10px] text-text-muted font-mono">
-                  {new Date(act.timestamp).toLocaleTimeString()}
-                </span>
+        {/* Live Coordination Action Feed */}
+        <div className="p-4 bg-bgside border border-border rounded-xl flex flex-col">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-bold tracking-wide uppercase text-text-secondary flex items-center gap-2">
+              <RefreshCw size={14} className="text-accent" />
+              <span>Live Coordination Stream</span>
+            </h3>
+            <span className="text-[10px] text-text-muted font-mono">.vendracode/brain.json</span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto max-h-56 space-y-1.5 pr-1">
+            {brainActions.length === 0 ? (
+              <div className="text-xs text-text-muted text-center py-8">
+                Local and CLI agents stream their file locks and thoughts in real time.
               </div>
-            ))
-          )}
+            ) : (
+              brainActions.map((act) => (
+                <div key={act.id} className="text-[11px] flex items-center justify-between p-2 rounded bg-bgdeep border border-border">
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="px-1.5 py-0.2 rounded bg-chip text-text-primary font-mono text-[10px] shrink-0">
+                      {act.agentName}
+                    </span>
+                    <span className="text-text-primary font-medium shrink-0">{act.action}</span>
+                    <span className="text-text-secondary truncate">{act.summary}</span>
+                  </div>
+                  <span className="text-[9px] text-text-muted font-mono shrink-0 ml-2">
+                    {new Date(act.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 };
-

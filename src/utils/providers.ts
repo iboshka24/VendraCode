@@ -140,6 +140,59 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description: 'Hermes Web Search: Search the web for documentation, libraries, live errors, or information using DuckDuckGo.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'The search query string' },
+          limit: { type: 'number', description: 'Max number of results to return (default: 6)' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'fetch_url',
+      description: 'Hermes Browser / Extract: Fetch any webpage or documentation URL and extract clean text/markdown.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'The full URL to fetch (e.g. https://docs.example.com)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'take_screenshot',
+      description: 'Hermes Computer-Use: Take a screenshot of the current desktop screen to inspect GUI apps, browser output, or visual bugs.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_system_info',
+      description: 'Hermes Computer-Use: Get details about the operating system, CPU architecture, RAM, uptime, and shell environment.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
 ];
 
 export const LANGUAGE_MAP: Record<string, string> = {

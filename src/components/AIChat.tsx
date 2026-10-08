@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, Wrench, X, Settings, ChevronDown, Sparkles, Square } from 'lucide-react';
+import { 
+  Send, Bot, User, Loader2, Wrench, X, Settings, ChevronDown, 
+  Sparkles, Square, Globe, Camera, Cpu, Terminal, ExternalLink,
+  Search, CheckCircle2, AlertCircle, FileCode, Check
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/stores/appStore';
 import { ChatMessage, ToolCall, ProviderConfig, ApprovalRequest } from '@/types/index';
@@ -18,6 +22,7 @@ export const AIChat: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isProviderDropdownOpen, setIsProviderDropdownOpen] = useState(false);
+  const [expandedToolMsgId, setExpandedToolMsgId] = useState<string | null>(null);
   
   // Pending approval state
   const [pendingApproval, setPendingApproval] = useState<{
@@ -53,7 +58,7 @@ export const AIChat: React.FC = () => {
           request: {
             id: toolCall.id,
             agentId: 'user-lane',
-            agentName: 'System',
+            agentName: 'Vendra AI',
             timestamp: Date.now(),
             action: name as any,
             description: `Tool ${name} execution`,
@@ -109,6 +114,26 @@ export const AIChat: React.FC = () => {
           const files = await api.fs.readDir(args.path || workspacePath || '');
           res = { files };
           break;
+        case 'web_search': {
+          const results = await api.hermes.webSearch(args.query, args.limit || 6);
+          res = { results, query: args.query };
+          break;
+        }
+        case 'fetch_url': {
+          const page = await api.hermes.fetchUrl(args.url, args.max_length || 8000);
+          res = { page };
+          break;
+        }
+        case 'take_screenshot': {
+          const shot = await api.hermes.takeScreenshot(workspacePath || undefined);
+          res = { screenshot: shot };
+          break;
+        }
+        case 'get_system_info': {
+          const sysInfo = await api.hermes.getSystemInfo();
+          res = { systemInfo: sysInfo };
+          break;
+        }
         default:
           return { error: `Unknown tool: ${name}` };
       }
@@ -119,8 +144,14 @@ export const AIChat: React.FC = () => {
           agentId: 'vendra-ai',
           agentName: 'Vendra AI',
           action: name,
-          targetFile: args.path || args.command,
-          summary: name === 'run_command' ? `Ran ${args.command}` : `Modified ${args.path}`,
+          targetFile: args.path || args.command || args.query || args.url,
+          summary: name === 'run_command' 
+            ? `Ran ${args.command}` 
+            : name === 'web_search' 
+            ? `Searched web for "${args.query}"` 
+            : name === 'take_screenshot'
+            ? 'Captured screen'
+            : `Modified ${args.path || 'workspace'}`,
         });
         if (args.path) {
           await api.brain.releaseLock({ filePath: args.path, agentId: 'vendra-ai' });
@@ -153,12 +184,24 @@ export const AIChat: React.FC = () => {
         id: 'system',
         role: 'system',
         timestamp: Date.now(),
-        content: `You are VendraCode AI, an expert coding assistant built into the VendraCode IDE. You can create, edit, and delete files, run terminal commands, and search the codebase. Always explain what you're about to do before using tools. Be concise and helpful. The workspace directory is: ${workspacePath}`
+        content: `You are VendraCode AI, an expert agentic coding assistant built into VendraCode IDE with Hermes Web Research and Computer-Use skills.
+You can:
+- Read, write, and delete files in the codebase
+- Execute terminal shell commands
+- Search the codebase
+- web_search: search live internet with DuckDuckGo Lite
+- fetch_url: fetch docs and webpages and convert to clean markdown
+- take_screenshot: capture desktop screen to inspect GUI / web preview
+- get_system_info: read hardware, OS, CPU and RAM specs
+Always explain your actions clearly and be concise. Workspace path: ${workspacePath}`
       };
 
       let keepRunning = true;
+      let turns = 0;
+      const MAX_TURNS = 10;
 
-      while (keepRunning) {
+      while (keepRunning && turns < MAX_TURNS) {
+        turns++;
         const apiMessages = [systemMessage, ...currentMessages].map(m => {
           return {
             role: m.role,
@@ -184,7 +227,7 @@ export const AIChat: React.FC = () => {
         });
 
         if (!response.ok) {
-          throw new Error(`API Error: ${response.statusText}`);
+          throw new Error(`API Error: ${response.status} ${response.statusText}`);
         }
 
         const data = await response.json();
@@ -224,7 +267,7 @@ export const AIChat: React.FC = () => {
     } catch (error: any) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `Error: ${error.message}`,
+        content: `⚠️ Error: ${error.message}`,
         id: Date.now().toString(),
         timestamp: Date.now()
       }]);
@@ -233,44 +276,81 @@ export const AIChat: React.FC = () => {
     }
   };
 
+  // Quick Action triggers for Hermes skills
+  const triggerQuickSearch = () => {
+    setInputValue(prev => prev ? `${prev} /websearch ` : 'Search the web for ');
+  };
+
+  const triggerInstantScreenshot = async () => {
+    if (!window.vendraAPI?.hermes) return;
+    try {
+      const shot = await window.vendraAPI.hermes.takeScreenshot(workspacePath || undefined);
+      if (shot.success) {
+        sendMessage(`I took a desktop screenshot at ${shot.path}. Please inspect what is on screen.`);
+      } else {
+        alert(shot.error || 'Failed to capture screen');
+      }
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const triggerSystemInfo = () => {
+    sendMessage('Check my computer system specs and hardware environment using get_system_info.');
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      sendMessage(inputValue);
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || !e.shiftKey)) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage(inputValue);
+      }
     }
   };
 
   return (
-    <div className="flex flex-col h-full bg-background border-l border-border text-text-primary">
-      {/* Header */}
-      <div className="flex items-center justify-between p-3 border-b border-border bg-surface">
-        <div className="flex items-center space-x-2">
-          <Sparkles className="w-5 h-5 text-primary" />
-          <span className="font-semibold text-sm">AI ASSISTANT</span>
+    <div className="flex flex-col h-full bg-bgside border-l border-border text-text-primary">
+      {/* Amoeba Style Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bgtitle shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
+          <span className="font-semibold text-xs tracking-wide text-text-primary">VENDRA AI</span>
+          <span className="text-[10px] text-text-muted px-1.5 py-0.5 rounded bg-chip border border-border">HERMES</span>
         </div>
         
-        {/* Provider Selector */}
+        {/* Amoeba Provider Pill */}
         <div className="relative">
           <button 
-            className="flex items-center space-x-1 text-xs px-2 py-1 bg-surface-hover rounded border border-border hover:bg-border transition-colors"
+            type="button"
+            className="agentpill"
             onClick={() => setIsProviderDropdownOpen(!isProviderDropdownOpen)}
+            title="Switch Provider & Model"
           >
-            <span>{activeProvider?.name || 'Select Provider'}</span>
-            <ChevronDown className="w-3 h-3" />
+            <span className="w-1.5 h-1.5 rounded-full bg-accent" />
+            <span className="font-mono text-xs">{activeProvider?.name || 'Select'}</span>
+            <ChevronDown className="w-3 h-3 text-text-muted" />
           </button>
           
           {isProviderDropdownOpen && providers && (
-            <div className="absolute right-0 mt-1 w-48 bg-surface border border-border rounded shadow-lg z-10">
+            <div className="absolute right-0 mt-1.5 w-52 bg-surface border border-border-light rounded-lg shadow-2xl z-50 p-1">
+              <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider">
+                Providers
+              </div>
               {providers.map(p => (
                 <button
                   key={p.id}
-                  className={`w-full text-left px-3 py-2 text-xs hover:bg-surface-hover ${p.id === activeProvider?.id ? 'text-primary' : 'text-text-primary'}`}
+                  className={`w-full text-left px-2.5 py-1.5 text-xs rounded-md transition-colors flex items-center justify-between ${
+                    p.id === activeProvider?.id 
+                      ? 'bg-chip text-text-primary font-medium' 
+                      : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                  }`}
                   onClick={() => {
                     setActiveProvider?.(p);
                     setIsProviderDropdownOpen(false);
                   }}
                 >
-                  {p.name}
+                  <span className="truncate">{p.name}</span>
+                  <span className="text-[10px] text-text-muted font-mono">{p.model}</span>
                 </button>
               ))}
             </div>
@@ -278,19 +358,51 @@ export const AIChat: React.FC = () => {
         </div>
       </div>
 
-      {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* Chat Messages Stream */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-center p-6 text-text-muted">
+            <div className="w-10 h-10 rounded-xl bg-chip border border-border flex items-center justify-center mb-3 text-text-primary shadow-sm">
+              <Sparkles className="w-5 h-5 text-accent" />
+            </div>
+            <h3 className="text-sm font-semibold text-text-primary mb-1">Autonomous Hermes Agent</h3>
+            <p className="text-xs text-text-secondary max-w-[260px] leading-relaxed mb-4">
+              Equipped with live DuckDuckGo web search, web browser extraction, desktop screenshot capture, and codebase tools.
+            </p>
+            <div className="flex flex-wrap gap-1.5 justify-center max-w-[280px]">
+              <button 
+                onClick={() => setInputValue('Search the web for the latest Next.js 15 features')}
+                className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
+              >
+                🔍 Search Next.js 15
+              </button>
+              <button 
+                onClick={triggerInstantScreenshot}
+                className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
+              >
+                📸 Take Screenshot
+              </button>
+              <button 
+                onClick={triggerSystemInfo}
+                className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
+              >
+                ⚡ System Specs
+              </button>
+            </div>
+          </div>
+        )}
+
         <AnimatePresence initial={false}>
           {messages.map((msg) => {
             if (msg.role === 'user') {
               return (
                 <motion.div 
                   key={msg.id}
-                  initial={{ opacity: 0, y: 10 }}
+                  initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="flex justify-end"
                 >
-                  <div className="bg-primary/10 border border-primary/20 text-text-primary px-4 py-2 rounded-lg max-w-[85%] text-sm whitespace-pre-wrap">
+                  <div className="bg-chip border border-border-light text-text-primary px-3.5 py-2 rounded-xl max-w-[88%] text-xs leading-relaxed whitespace-pre-wrap shadow-sm">
                     {msg.content}
                   </div>
                 </motion.div>
@@ -301,14 +413,14 @@ export const AIChat: React.FC = () => {
               return (
                 <motion.div 
                   key={msg.id}
-                  initial={{ opacity: 0, y: 10 }}
+                  initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="flex justify-start space-x-2"
+                  className="flex justify-start gap-2"
                 >
-                  <div className="w-8 h-8 rounded-full bg-surface-hover flex items-center justify-center flex-shrink-0 border border-border">
-                    <Bot className="w-4 h-4 text-primary" />
+                  <div className="w-6 h-6 rounded-md bg-chip border border-border flex items-center justify-center shrink-0 mt-0.5">
+                    <Bot className="w-3.5 h-3.5 text-accent" />
                   </div>
-                  <div className="bg-surface border border-border text-text-primary px-4 py-2 rounded-lg max-w-[85%] text-sm whitespace-pre-wrap">
+                  <div className="bg-surface border border-border text-text-primary px-3 py-2 rounded-xl max-w-[90%] text-xs leading-relaxed whitespace-pre-wrap select-text">
                     {msg.content}
                   </div>
                 </motion.div>
@@ -316,21 +428,140 @@ export const AIChat: React.FC = () => {
             }
 
             if (msg.role === 'tool') {
-              let parsedContent: any = {};
-              try { parsedContent = JSON.parse(msg.content); } catch (e) {}
-              
+              let parsed: any = {};
+              try { parsed = JSON.parse(msg.content); } catch (e) {}
+              const isExpanded = expandedToolMsgId === msg.id;
+
+              // 1. Hermes Web Search Tool Card
+              if (msg.toolName === 'web_search') {
+                const results: any[] = parsed.results || [];
+                return (
+                  <motion.div 
+                    key={msg.id}
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="ml-8 bg-surface border border-border rounded-lg p-2.5 text-xs shadow-sm"
+                  >
+                    <div 
+                      onClick={() => setExpandedToolMsgId(isExpanded ? null : msg.id)}
+                      className="flex items-center justify-between cursor-pointer select-none"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Globe className="w-3.5 h-3.5 text-accent" />
+                        <span className="font-semibold text-text-primary">Web Search</span>
+                        <span className="text-[10px] text-text-muted font-mono bg-chip px-1.5 py-0.2 rounded border border-border">
+                          {results.length} sources
+                        </span>
+                      </div>
+                      <ChevronDown className={`w-3 h-3 text-text-muted transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                    </div>
+
+                    {isExpanded && results.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-border space-y-2">
+                        {results.slice(0, 4).map((r, i) => (
+                          <div key={i} className="p-2 bg-bgside rounded border border-border/80">
+                            <a 
+                              href={r.url} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="font-medium text-accent hover:underline flex items-center gap-1 text-[11px]"
+                            >
+                              {r.title}
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                            <p className="text-[10px] text-text-secondary mt-0.5 line-clamp-2">{r.snippet}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </motion.div>
+                );
+              }
+
+              // 2. Hermes Fetch URL Card
+              if (msg.toolName === 'fetch_url') {
+                const page = parsed.page || {};
+                return (
+                  <motion.div 
+                    key={msg.id}
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="ml-8 bg-surface border border-border rounded-lg p-2.5 text-xs"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Globe className="w-3.5 h-3.5 text-accent" />
+                        <span className="font-semibold text-text-primary truncate max-w-[180px]">{page.title || 'Page Reader'}</span>
+                      </div>
+                      <span className="text-[10px] text-text-muted font-mono">{page.content ? `${page.content.length} chars` : 'ok'}</span>
+                    </div>
+                  </motion.div>
+                );
+              }
+
+              // 3. Hermes Screen Capture Card
+              if (msg.toolName === 'take_screenshot') {
+                const shot = parsed.screenshot || {};
+                return (
+                  <motion.div 
+                    key={msg.id}
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="ml-8 bg-surface border border-border rounded-lg p-2.5 text-xs"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Camera className="w-3.5 h-3.5 text-accent" />
+                      <span className="font-semibold text-text-primary">Desktop Screen Captured</span>
+                    </div>
+                    {shot.path && (
+                      <div className="text-[10px] font-mono text-text-muted bg-bgside p-1.5 rounded border border-border truncate">
+                        {shot.path}
+                      </div>
+                    )}
+                  </motion.div>
+                );
+              }
+
+              // 4. Hermes System Info Card
+              if (msg.toolName === 'get_system_info') {
+                const info = parsed.systemInfo || {};
+                return (
+                  <motion.div 
+                    key={msg.id}
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="ml-8 bg-surface border border-border rounded-lg p-2 text-xs"
+                  >
+                    <div className="flex items-center gap-1.5 mb-2 font-semibold text-text-primary">
+                      <Cpu className="w-3.5 h-3.5 text-accent" />
+                      <span>Host Hardware & OS</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono text-text-secondary">
+                      <div className="bg-bgside p-1.5 rounded border border-border">OS: {info.platform} {info.arch}</div>
+                      <div className="bg-bgside p-1.5 rounded border border-border">CPUs: {info.cpus?.length || 1} Cores</div>
+                      <div className="bg-bgside p-1.5 rounded border border-border">RAM: {info.memory?.total || 'N/A'}</div>
+                      <div className="bg-bgside p-1.5 rounded border border-border">Uptime: {info.uptime || 'N/A'}</div>
+                    </div>
+                  </motion.div>
+                );
+              }
+
+              // Default Tool Result Pill
               return (
                 <motion.div 
                   key={msg.id}
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="flex justify-start ml-10"
+                  className="flex justify-start ml-8"
                 >
-                  <div className="flex items-center space-x-2 text-xs text-text-muted bg-surface/50 border border-border/50 px-2 py-1 rounded">
-                    <Wrench className="w-3 h-3" />
-                    <span className="font-mono">
-                      {msg.toolName} {parsedContent?.error ? '- Failed' : '- Success'}
-                    </span>
+                  <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-chip border border-border px-2.5 py-1 rounded-md">
+                    {parsed?.error ? (
+                      <AlertCircle className="w-3 h-3 text-danger" />
+                    ) : (
+                      <CheckCircle2 className="w-3 h-3 text-success" />
+                    )}
+                    <span className="font-mono">{msg.toolName}</span>
+                    {parsed?.path && <span className="text-text-secondary truncate max-w-[140px] font-mono">({parsed.path})</span>}
                   </div>
                 </motion.div>
               );
@@ -340,85 +571,119 @@ export const AIChat: React.FC = () => {
           })}
         </AnimatePresence>
 
-        {/* Approval Card */}
+        {/* Amoeba Approval Gate */}
         {pendingApproval && (
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="flex justify-start ml-10"
+            className="ml-6 bg-surface border border-border-light rounded-xl p-3.5 shadow-xl space-y-3"
           >
-            <div className="bg-surface border border-border rounded-lg p-3 max-w-[85%] text-sm shadow-sm space-y-3">
-              <div className="font-semibold text-text-primary flex items-center space-x-2">
-                <Settings className="w-4 h-4" />
-                <span>Approval Required: {pendingApproval.request.action}</span>
-              </div>
-              <div className="font-mono text-xs bg-background p-2 rounded text-text-secondary break-all">
-                {JSON.stringify(JSON.parse(pendingApproval.request.details), null, 2)}
-              </div>
-              <div className="flex space-x-2 justify-end">
-                <button 
-                  onClick={() => pendingApproval.resolve(false)}
-                  className="px-3 py-1.5 text-xs text-danger bg-danger/10 hover:bg-danger/20 rounded transition-colors"
-                >
-                  Deny
-                </button>
-                <button 
-                  onClick={() => pendingApproval.resolve(true)}
-                  className="px-3 py-1.5 text-xs text-success bg-success/10 hover:bg-success/20 rounded transition-colors font-medium"
-                >
-                  Approve
-                </button>
-              </div>
+            <div className="font-semibold text-text-primary text-xs flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Settings className="w-3.5 h-3.5 text-warning" />
+                Approval Required
+              </span>
+              <span className="text-[10px] text-text-muted uppercase font-mono px-1.5 py-0.5 bg-chip rounded">
+                {pendingApproval.request.action}
+              </span>
+            </div>
+            <div className="font-mono text-[11px] bg-bgside p-2 rounded border border-border text-text-secondary break-all max-h-36 overflow-y-auto">
+              {JSON.stringify(JSON.parse(pendingApproval.request.details), null, 2)}
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <button 
+                type="button"
+                onClick={() => pendingApproval.resolve(false)}
+                className="btn btn-danger text-xs h-7"
+              >
+                Deny
+              </button>
+              <button 
+                type="button"
+                onClick={() => pendingApproval.resolve(true)}
+                className="btn btn-success text-xs h-7"
+              >
+                Approve
+              </button>
             </div>
           </motion.div>
         )}
 
-        {/* Loading Indicator */}
+        {/* Running Indicator */}
         {agentStatus === 'running' && !pendingApproval && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="flex justify-start space-x-2"
+            className="flex justify-start gap-2 items-center text-xs text-text-muted ml-8"
           >
-            <div className="w-8 h-8 rounded-full bg-surface-hover flex items-center justify-center flex-shrink-0 border border-border">
-              <Bot className="w-4 h-4 text-primary" />
-            </div>
-            <div className="bg-surface border border-border px-4 py-3 rounded-lg flex items-center space-x-1">
-              <div className="w-1.5 h-1.5 bg-text-muted rounded-full animate-pulse" />
-              <div className="w-1.5 h-1.5 bg-text-muted rounded-full animate-pulse delay-75" />
-              <div className="w-1.5 h-1.5 bg-text-muted rounded-full animate-pulse delay-150" />
-            </div>
+            <div className="dotpulse" />
+            <span className="font-mono text-[11px]">Vendra AI is thinking and executing...</span>
           </motion.div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="p-4 border-t border-border bg-surface">
-        <div className="relative flex items-end bg-background border border-border rounded-lg focus-within:border-primary focus-within:ring-1 focus-within:ring-primary transition-all">
+      {/* Input Area with Hermes Skill Triggers */}
+      <div className="p-3 border-t border-border bg-bgtitle shrink-0">
+        {/* Hermes Skill Bar */}
+        <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+          <button
+            type="button"
+            onClick={triggerQuickSearch}
+            className="amoeba-chip hover:border-border-light hover:text-text-primary cursor-pointer transition-colors"
+            title="Search Web via DuckDuckGo"
+          >
+            <Globe className="w-3 h-3 text-accent" />
+            <span>Search</span>
+          </button>
+          <button
+            type="button"
+            onClick={triggerInstantScreenshot}
+            className="amoeba-chip hover:border-border-light hover:text-text-primary cursor-pointer transition-colors"
+            title="Take Screen Capture"
+          >
+            <Camera className="w-3 h-3 text-primary" />
+            <span>Screen</span>
+          </button>
+          <button
+            type="button"
+            onClick={triggerSystemInfo}
+            className="amoeba-chip hover:border-border-light hover:text-text-primary cursor-pointer transition-colors"
+            title="Inspect Host Specs"
+          >
+            <Cpu className="w-3 h-3 text-warning" />
+            <span>Specs</span>
+          </button>
+        </div>
+
+        {/* Textarea + Tactile Send */}
+        <div className="relative flex items-end bg-bgside border border-border rounded-xl focus-within:border-line2 transition-all">
           <textarea
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask AI anything... (Ctrl+Enter to send)"
-            className="w-full max-h-32 min-h-[40px] bg-transparent text-text-primary text-sm p-3 resize-none outline-none focus:outline-none scrollbar-thin"
-            rows={Math.min(6, inputValue.split('\n').length)}
+            placeholder="Ask agent, run tools, or search web... (Enter to send)"
+            className="w-full max-h-32 min-h-[44px] bg-transparent text-text-primary text-xs p-3 resize-none outline-none leading-relaxed"
+            rows={Math.min(5, inputValue.split('\n').length || 1)}
           />
-          <div className="p-2 flex-shrink-0">
+          <div className="p-2 shrink-0">
             {agentStatus === 'running' ? (
               <button
+                type="button"
                 disabled
-                className="p-1.5 rounded-md text-text-muted hover:bg-surface-hover"
+                className="btn btn-ghost h-7 w-7 p-0 rounded-lg text-text-muted"
               >
-                <Square className="w-4 h-4 fill-current" />
+                <Square className="w-3.5 h-3.5 fill-current" />
               </button>
             ) : (
               <button
+                type="button"
                 onClick={() => sendMessage(inputValue)}
                 disabled={!inputValue.trim()}
-                className="p-1.5 rounded-md text-primary hover:bg-primary/10 disabled:text-text-muted disabled:hover:bg-transparent transition-colors"
+                className="btn btn-primary h-7 w-7 p-0 rounded-lg"
+                title="Send message"
               >
-                <Send className="w-4 h-4" />
+                <Send className="w-3.5 h-3.5" />
               </button>
             )}
           </div>

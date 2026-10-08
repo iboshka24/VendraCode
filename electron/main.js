@@ -237,10 +237,29 @@ ipcMain.handle('git:log', async (_event, cwd, count = 20) => {
   });
 });
 
+const { webSearch, fetchUrl, takeScreenshot, getSystemInfo } = require('./tools');
+
 // ─── Shell / External links ────────────────────────────────────────
 
 ipcMain.handle('shell:openExternal', async (_event, url) => {
   await shell.openExternal(url);
+});
+
+// ─── Hermes Agent Skills (Web Search, Browser, Computer-Use) ───────
+ipcMain.handle('hermes:webSearch', async (_event, query, limit = 8) => {
+  return await webSearch(query, limit);
+});
+
+ipcMain.handle('hermes:fetchUrl', async (_event, url, maxLength = 8000) => {
+  return await fetchUrl(url, maxLength);
+});
+
+ipcMain.handle('hermes:takeScreenshot', async (_event, workspacePath) => {
+  return await takeScreenshot(workspacePath);
+});
+
+ipcMain.handle('hermes:getSystemInfo', async () => {
+  return getSystemInfo();
 });
 
 // ─── Brain & Multi-Agent Coordination Layer ────────────────────────

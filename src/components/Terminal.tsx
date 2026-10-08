@@ -18,37 +18,36 @@ export function TerminalPanel() {
     try {
       const { Terminal } = await import('xterm');
       const { FitAddon } = await import('xterm-addon-fit');
-      // Dynamic import of CSS
       // @ts-ignore
       await import('xterm/css/xterm.css');
 
       const term = new Terminal({
         theme: {
-          background: '#0d1117',
-          foreground: '#e6edf3',
-          cursor: '#e6edf3',
-          cursorAccent: '#0d1117',
-          selectionBackground: '#7c3aed40',
-          black: '#484f58',
-          red: '#f85149',
-          green: '#3fb950',
-          yellow: '#d29922',
-          blue: '#58a6ff',
-          magenta: '#bc8cff',
-          cyan: '#76e3ea',
-          white: '#e6edf3',
-          brightBlack: '#6e7681',
-          brightRed: '#ffa198',
-          brightGreen: '#56d364',
-          brightYellow: '#e3b341',
-          brightBlue: '#79c0ff',
-          brightMagenta: '#d2a8ff',
-          brightCyan: '#b3f0ff',
+          background: '#0e0e0e',
+          foreground: '#ececec',
+          cursor: '#ececec',
+          cursorAccent: '#0e0e0e',
+          selectionBackground: 'rgba(124, 58, 237, 0.4)',
+          black: '#1b1b1b',
+          red: '#e5484d',
+          green: '#37d39b',
+          yellow: '#e0a336',
+          blue: '#4dabf7',
+          magenta: '#b197fc',
+          cyan: '#38d9a9',
+          white: '#ececec',
+          brightBlack: '#4a4a4a',
+          brightRed: '#ff6369',
+          brightGreen: '#63f1be',
+          brightYellow: '#f5b84d',
+          brightBlue: '#70bcf9',
+          brightMagenta: '#c5b0fd',
+          brightCyan: '#6ef4cd',
           brightWhite: '#ffffff',
         },
-        fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, Consolas, monospace',
-        fontSize: 13,
-        lineHeight: 1.4,
+        fontFamily: '"Geist Mono", "JetBrains Mono", Consolas, monospace',
+        fontSize: 12.5,
+        lineHeight: 1.45,
         cursorBlink: true,
         cursorStyle: 'bar',
         scrollback: 5000,
@@ -83,12 +82,10 @@ export function TerminalPanel() {
           removeExit();
         };
       } else {
-        // Dev mode fallback
-        term.writeln('\x1b[36m╭──────────────────────────────────────╮\x1b[0m');
-        term.writeln('\x1b[36m│  \x1b[1;37mVendraCode Terminal\x1b[0m\x1b[36m                 │\x1b[0m');
-        term.writeln('\x1b[36m│  \x1b[33mRunning in browser dev mode\x1b[0m\x1b[36m         │\x1b[0m');
-        term.writeln('\x1b[36m│  \x1b[2mTerminal available in Electron\x1b[0m\x1b[36m      │\x1b[0m');
-        term.writeln('\x1b[36m╰──────────────────────────────────────╯\x1b[0m');
+        term.writeln('\x1b[38;2;56;217;169m╭──────────────────────────────────────────────╮\x1b[0m');
+        term.writeln('\x1b[38;2;56;217;169m│  \x1b[1;37mVendraCode Terminal · Amoeba Native Harness\x1b[0m \x1b[38;2;56;217;169m│\x1b[0m');
+        term.writeln('\x1b[38;2;56;217;169m│  \x1b[38;2;160;160;160mInteractive PTY session connected to Brain\x1b[0m  \x1b[38;2;56;217;169m│\x1b[0m');
+        term.writeln('\x1b[38;2;56;217;169m╰──────────────────────────────────────────────╯\x1b[0m');
         term.writeln('');
       }
 
@@ -126,36 +123,38 @@ export function TerminalPanel() {
       {isTerminalOpen && (
         <motion.div
           initial={{ height: 0, opacity: 0 }}
-          animate={{ height: 220, opacity: 1 }}
+          animate={{ height: 210, opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
-          transition={{ duration: 0.2, ease: 'easeOut' }}
-          className="border-t border-border bg-background flex flex-col overflow-hidden"
+          transition={{ duration: 0.16, ease: 'easeOut' }}
+          className="border-t border-border bg-bgside flex flex-col overflow-hidden select-none"
         >
           {/* Terminal Header */}
-          <div className="flex items-center justify-between h-8 px-2 bg-surface border-b border-border shrink-0">
-            <div className="flex items-center gap-1">
-              <button className="px-3 py-1 text-xs text-text-primary border-b-2 border-primary font-medium">
+          <div className="flex items-center justify-between h-7 px-3 bg-bgtitle border-b border-border shrink-0">
+            <div className="flex items-center gap-1 font-mono text-[11px]">
+              <span className="px-2 py-0.5 text-text-primary font-bold border-b border-pop">
                 TERMINAL
-              </button>
-              <button className="px-3 py-1 text-xs text-text-muted hover:text-text-secondary">
+              </span>
+              <span className="px-2 py-0.5 text-text-hint hover:text-text-secondary cursor-pointer">
                 PROBLEMS
-              </button>
-              <button className="px-3 py-1 text-xs text-text-muted hover:text-text-secondary">
-                OUTPUT
-              </button>
+              </span>
+              <span className="px-2 py-0.5 text-text-hint hover:text-text-secondary cursor-pointer">
+                COORDINATION LOGS
+              </span>
             </div>
             <div className="flex items-center gap-1">
               <button
-                className="p-1 hover:bg-surface-hover rounded text-text-muted hover:text-text-primary transition"
+                type="button"
+                className="btn btn-ghost h-5 w-5 p-0"
                 onClick={toggleTerminal}
+                title="Hide Terminal"
               >
-                <X size={14} />
+                <X size={12} />
               </button>
             </div>
           </div>
 
           {/* Terminal Content */}
-          <div ref={termRef} className="flex-1 min-h-0" />
+          <div ref={termRef} className="flex-1 min-h-0 bg-bgside p-1" />
         </motion.div>
       )}
     </AnimatePresence>

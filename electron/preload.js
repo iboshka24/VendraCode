@@ -49,6 +49,14 @@ contextBridge.exposeInMainWorld('vendraAPI', {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   },
 
+  // Hermes Agent Skills (Web Search, Browser, Computer-Use)
+  hermes: {
+    webSearch: (query, limit) => ipcRenderer.invoke('hermes:webSearch', query, limit),
+    fetchUrl: (url, maxLength) => ipcRenderer.invoke('hermes:fetchUrl', url, maxLength),
+    takeScreenshot: (workspacePath) => ipcRenderer.invoke('hermes:takeScreenshot', workspacePath),
+    getSystemInfo: () => ipcRenderer.invoke('hermes:getSystemInfo'),
+  },
+
   // Local CLI Agent Integration (agy, cline, opencode, claude)
   cli: {
     detectAll: () => ipcRenderer.invoke('cli:detectAll'),

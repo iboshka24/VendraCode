@@ -29,6 +29,12 @@ export interface VendraAPI {
   shell: {
     openExternal: (url: string) => Promise<void>;
   };
+  hermes: {
+    webSearch: (query: string, limit?: number) => Promise<Array<{ title: string; url: string; snippet: string }>>;
+    fetchUrl: (url: string, maxLength?: number) => Promise<{ title: string; content: string; url: string; error?: string }>;
+    takeScreenshot: (workspacePath?: string) => Promise<{ success: boolean; path?: string; filename?: string; error?: string; message?: string }>;
+    getSystemInfo: () => Promise<Record<string, any>>;
+  };
   cli: {
     detectAll: () => Promise<LocalCLIDetected[]>;
     spawnAgent: (opts: { agentId: string; cliBin: string; args?: string[]; cwd?: string; prompt?: string }) => Promise<{ success: boolean; error?: string }>;

@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { GitBranch, AlertCircle, Wifi, WifiOff, Zap } from 'lucide-react';
+import { GitBranch, AlertCircle, Wifi, WifiOff, Zap, Shield } from 'lucide-react';
 
 export function StatusBar() {
   const { gitStatus, setGitStatus, workspacePath, agentStatus, activeProvider } = useAppStore();
@@ -26,26 +26,29 @@ export function StatusBar() {
   const modifiedCount = gitStatus?.files.length || 0;
 
   return (
-    <footer className="h-6 border-t border-border bg-surface flex items-center justify-between px-3 text-[11px] text-text-muted select-none shrink-0">
+    <footer className="h-6 border-t border-border bg-bgtitle flex items-center justify-between px-3 text-[11px] text-text-muted select-none shrink-0 font-mono">
       {/* Left */}
       <div className="flex items-center gap-3">
         {/* Git Branch */}
-        <span className="flex items-center gap-1 hover:text-text-primary cursor-pointer transition">
-          <GitBranch size={12} />
-          {gitStatus?.branch || 'no repo'}
+        <span className="flex items-center gap-1 text-text-secondary hover:text-text-primary cursor-pointer transition">
+          <GitBranch size={11} />
+          <span>{gitStatus?.branch || 'main'}</span>
         </span>
 
         {/* Modified files */}
-        {modifiedCount > 0 && (
+        {modifiedCount > 0 ? (
           <span className="flex items-center gap-1 text-warning">
-            <AlertCircle size={11} />
+            <AlertCircle size={10} />
             {modifiedCount} modified
           </span>
+        ) : (
+          <span className="text-[10px] text-text-hint">Clean worktree</span>
         )}
 
-        {/* Errors */}
-        <span className="hover:text-text-primary cursor-pointer transition">
-          0 Errors, 0 Warnings
+        {/* Advisory Locks */}
+        <span className="flex items-center gap-1 text-text-hint">
+          <Shield size={10} />
+          Zero Conflicts
         </span>
       </div>
 
@@ -53,32 +56,26 @@ export function StatusBar() {
       <div className="flex items-center gap-3">
         {/* Agent Status */}
         <span className={`flex items-center gap-1 ${
-          agentStatus === 'running' ? 'text-success' :
-          agentStatus === 'error' ? 'text-danger' : 'text-text-muted'
+          agentStatus === 'running' ? 'text-ok' :
+          agentStatus === 'error' ? 'text-danger' : 'text-text-secondary'
         }`}>
-          <Zap size={11} />
-          Agent: {agentStatus}
+          <Zap size={10} className={agentStatus === 'running' ? 'text-ok animate-pulse' : ''} />
+          <span>Agent: {agentStatus}</span>
         </span>
 
         {/* Provider */}
-        <span className="flex items-center gap-1">
-          {activeProvider.isConnected ? (
-            <Wifi size={11} className="text-success" />
-          ) : (
-            <WifiOff size={11} className="text-text-muted" />
-          )}
-          {activeProvider.name}
+        <span className="flex items-center gap-1 text-text-secondary">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent" />
+          <span>{activeProvider?.name || 'Local'}</span>
         </span>
 
-        {/* Sync */}
-        <span className="flex items-center gap-1">
-          <span className={`w-1.5 h-1.5 rounded-full ${
-            workspacePath ? 'bg-success animate-pulse' : 'bg-text-muted'
-          }`} />
-          {workspacePath ? 'Live Sync' : 'No workspace'}
+        {/* Brain Live Sync */}
+        <span className="flex items-center gap-1.5 text-text-secondary">
+          <span className="dotpulse" />
+          <span>Brain: Live</span>
         </span>
 
-        <span>UTF-8</span>
+        <span className="text-text-hint">UTF-8</span>
       </div>
     </footer>
   );
