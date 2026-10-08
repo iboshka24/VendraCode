@@ -56,7 +56,25 @@ export interface VendraAPI {
     onAgentTyping: (callback: (payload: { agentId: string; agentName: string; filePath: string; lineNum?: number; text?: string; color?: string }) => void) => () => void;
   };
   scanner: {
-    scanModels: (opts: { providerType?: string; baseUrl?: string; apiKey?: string }) => Promise<Array<{ id: string; name: string; provider?: string; size?: string; source?: string }>>;
+    scanModels: (opts: { providerType?: string; baseUrl?: string; apiKey?: string }) => Promise<Array<{
+      id: string;
+      name: string;
+      provider?: string;
+      size?: string;
+      source?: string;
+      /** Provider id the model should be imported into (e.g. `cli-tokenharbor`). */
+      providerId?: string;
+      /** OpenAI-compatible endpoint the model lives on. */
+      baseUrl?: string;
+      /** Credential discovered for that endpoint (e.g. from opencode.json). */
+      apiKey?: string;
+      /** Display name for the provider the model belongs to (e.g. "Token Harbor"). */
+      providerName?: string;
+      /** True when the endpoint needs a key the app could not find. */
+      requiresKey?: boolean;
+      /** Human hint for a missing credential, e.g. "set NVIDIA_API_KEY in your shell". */
+      keyHint?: string;
+    }>>;
   };
   workspace: {
     watch: (path: string) => Promise<{ success: boolean; error?: string }>;
@@ -178,7 +196,12 @@ export interface EditorTab {
 
 // ─── AI Agent Types ────────────────────────────────────────────────
 
-export type LLMProvider = 'openai' | 'anthropic' | 'nvidia' | 'custom';
+/**
+ * Known provider ids keep autocomplete; arbitrary strings are allowed so
+ * providers imported from the model scanner (e.g. `cli-tokenharbor`,
+ * `openrouter-free`) can be persisted in settings.
+ */
+export type LLMProvider = 'openai' | 'anthropic' | 'nvidia' | 'custom' | (string & {});
 
 export interface ProviderConfig {
   id: LLMProvider;

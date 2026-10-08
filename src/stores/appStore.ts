@@ -75,6 +75,7 @@ interface AppState {
   settings: AppSettings;
   updateSettings: (updates: Partial<AppSettings>) => void;
   updateProvider: (id: string, updates: Partial<ProviderConfig>) => void;
+  upsertProvider: (provider: ProviderConfig) => void;
 
   // Terminal
   isTerminalOpen: boolean;
@@ -139,6 +140,17 @@ const loadSettings = (): AppSettings => {
       requireApproval: true,
     },
   };
+};
+
+/** Resolves the provider the user last picked (survives restarts). */
+const resolveActiveProvider = (): ProviderConfig => {
+  const settings = loadSettings();
+  try {
+    const savedId = localStorage.getItem('vendracode-active-provider');
+    const saved = savedId ? settings.providers.find((p) => p.id === savedId) : undefined;
+    if (saved) return saved;
+  } catch {}
+  return settings.providers[0];
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -215,8 +227,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleChat: () => set((s) => ({ isChatOpen: !s.isChatOpen })),
 
   // Active provider
-  activeProvider: loadSettings().providers[0],
-  setActiveProvider: (provider) => set({ activeProvider: provider }),
+  activeProvider: resolveActiveProvider(),
+  setActiveProvider: (provider) => {
+    try {
+      localStorage.setItem('vendracode-active-provider', provider.id);
+    } catch {}
+    set({ activeProvider: provider });
+  },
 
   // Agent status
   agentStatus: 'idle',
@@ -361,6 +378,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       // If active provider is updated, sync it
       const activeProvider = s.activeProvider.id === id ? { ...s.activeProvider, ...updates } : s.activeProvider;
       return { settings: newSettings, activeProvider };
+    });
+  },
+  /**
+   * Creates or fully replaces a provider entry. Used by the model picker to
+   * import a discovered model together with its endpoint + credentials, which
+   * `updateProvider` cannot do (it only patches ids that already exist).
+   * The upserted provider becomes active immediately and survives restarts.
+   */
+  upsertProvider: (provider) => {
+    set((s) => {
+      const exists = s.settings.providers.some((p) => p.id === provider.id);
+      const providers = exists
+        ? s.settings.providers.map((p) => (p.id === provider.id ? provider : p))
+        : [...s.settings.providers, provider];
+      const newSettings = { ...s.settings, providers };
+      localStorage.setItem('vendracode-settings', JSON.stringify(newSettings));
+      try {
+        localStorage.setItem('vendracode-active-provider', provider.id);
+      } catch {}
+      return { settings: newSettings, activeProvider: provider };
     });
   },
 

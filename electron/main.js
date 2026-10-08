@@ -635,6 +635,25 @@ ipcMain.handle('cli:stopAgent', async (_event, agentId) => {
 });
 
 // ─── Live Dynamic Model Scanner IPC ────────────────────────────────
+// ─── Model Scanner Helpers ─────────────────────────────────────────
+
+/**
+ * opencode.json stores credentials as `{env:VAR_NAME}` placeholders which the
+ * CLI resolves at runtime. Resolve them here too: without this the IDE would
+ * send the literal string "{env:NVIDIA_API_KEY}" as the bearer token and every
+ * request would fail with 401.
+ *
+ * Returns `{ value, missing }` so the UI can flag models whose env var is unset.
+ */
+function resolveCredential(raw) {
+  if (typeof raw !== 'string' || raw.length === 0) return { value: '', missing: null };
+  const match = raw.match(/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/);
+  if (!match) return { value: raw, missing: null };
+  const varName = match[1];
+  const resolved = process.env[varName];
+  return resolved ? { value: resolved, missing: null } : { value: '', missing: varName };
+}
+
 ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, apiKey }) => {
   const models = [];
   const home = process.env.HOME || '';
@@ -642,27 +661,60 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
   try {
     // 1. OpenCode & OpenRouter Free Models Catalog
     if (providerType === 'opencode' || providerType === 'openrouter' || !providerType) {
-      // User's configured opencode.json models
+      // Parse the local opencode config once: provider models + optional
+      // OpenRouter credentials both come from it.
       const configPath = path.join(home, '.config', 'opencode', 'opencode.json');
+      let opencodeCfg = null;
       if (fs.existsSync(configPath)) {
         try {
-          const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-          if (cfg.provider) {
-            for (const [pName, pConfig] of Object.entries(cfg.provider)) {
-              if (pConfig.models && typeof pConfig.models === 'object') {
-                for (const mId of Object.keys(pConfig.models)) {
-                  models.push({
-                    id: `${pName}/${mId}`,
-                    name: `${mId} · ${pName}`,
-                    provider: 'opencode',
-                    source: 'opencode.json (Local Config)'
-                  });
-                }
-              }
-            }
-          }
+          opencodeCfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         } catch (e) {
           console.warn('OpenCode config parse warning:', e);
+        }
+      }
+
+      // OpenRouter is a separate endpoint that needs its own API key
+      const orProvider = (opencodeCfg?.provider?.openrouter) || (opencodeCfg?.provider?.['openrouter-free']) || null;
+      const orCredential = resolveCredential(orProvider?.options?.apiKey || process.env.OPENROUTER_API_KEY || '');
+      const OPENROUTER_ROUTE = {
+        providerId: 'openrouter-free',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: orCredential.value,
+        requiresKey: orCredential.value ? false : true,
+        keyHint: orCredential.value ? undefined : 'add an OpenRouter key in Settings (or set OPENROUTER_API_KEY)',
+      };
+
+      // User's configured opencode.json models
+      if (opencodeCfg?.provider) {
+        for (const [pName, pConfig] of Object.entries(opencodeCfg.provider)) {
+          if (pConfig.models && typeof pConfig.models === 'object') {
+            // Real OpenAI-compatible endpoint + credentials from opencode.json,
+            // so a model picked in the IDE actually becomes callable.
+            // Credentials may be `{env:VAR}` placeholders — resolve them.
+            const endpoint = (pConfig.options?.baseURL || '').replace(/\/$/, '');
+            const credential = resolveCredential(pConfig.options?.apiKey || '');
+            const route = {
+              providerId: `cli-${pName}`,
+              baseUrl: endpoint,
+              apiKey: credential.value,
+              // Human-facing provider name from the config ("Token Harbor"),
+              // falling back to the raw provider key.
+              providerName: pConfig.name || pName,
+              // Flag models whose credential env var is not set in this session.
+              requiresKey: credential.missing ? true : false,
+              keyHint: credential.missing ? `set ${credential.missing} in your shell (or paste a key in Settings)` : undefined,
+            };
+            for (const mId of Object.keys(pConfig.models)) {
+              const configuredName = (pConfig.models[mId] && pConfig.models[mId].name) || mId;
+              models.push({
+                id: `${pName}/${mId}`,
+                name: `${configuredName} · ${pName}`,
+                provider: 'opencode',
+                source: 'opencode.json (Local Config)',
+                ...route,
+              });
+            }
+          }
         }
       }
 
@@ -680,7 +732,8 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
               id: m.id,
               name: `${m.name || m.id} (Free)`,
               provider: 'openrouter-free',
-              source: 'OpenCode Free Tier'
+              source: 'OpenRouter · needs API key',
+              ...OPENROUTER_ROUTE,
             });
           });
         }
@@ -688,19 +741,19 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
         console.warn('OpenRouter free models query fallback:', err.message);
       }
 
-      // Default verified OpenCode free models
+      // Default verified OpenCode free models (also OpenRouter-hosted)
       const verifiedFree = [
-        { id: 'openrouter/auto', name: 'OpenRouter Auto (Free Router)', provider: 'opencode', source: 'OpenCode Free' },
-        { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (Free)', provider: 'google', source: 'OpenCode Free' },
-        { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B Instruct (Free)', provider: 'meta', source: 'OpenCode Free' },
-        { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 Reasoning (Free)', provider: 'deepseek', source: 'OpenCode Free' },
-        { id: 'deepseek/deepseek-chat:free', name: 'DeepSeek V3 Chat (Free)', provider: 'deepseek', source: 'OpenCode Free' },
-        { id: 'qwen/qwen-2.5-coder-32b-instruct:free', name: 'Qwen 2.5 Coder 32B (Free)', provider: 'qwen', source: 'OpenCode Free' },
-        { id: 'mistralai/mistral-small-24b-instruct-2501:free', name: 'Mistral Small 24B (Free)', provider: 'mistral', source: 'OpenCode Free' },
-        { id: 'nvidia/nemotron-3.5-lightning:free', name: 'NVIDIA Nemotron 3.5 (Free)', provider: 'nvidia', source: 'OpenCode Free' },
-        { id: 'liquid/lfm-2.5-2.6b:free', name: 'Liquid LFM 2.6B (Free)', provider: 'liquid', source: 'OpenCode Free' },
+        { id: 'openrouter/auto', name: 'OpenRouter Auto (Free Router)', provider: 'opencode', source: 'OpenRouter · needs API key' },
+        { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (Free)', provider: 'google', source: 'OpenRouter · needs API key' },
+        { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B Instruct (Free)', provider: 'meta', source: 'OpenRouter · needs API key' },
+        { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 Reasoning (Free)', provider: 'deepseek', source: 'OpenRouter · needs API key' },
+        { id: 'deepseek/deepseek-chat:free', name: 'DeepSeek V3 Chat (Free)', provider: 'deepseek', source: 'OpenRouter · needs API key' },
+        { id: 'qwen/qwen-2.5-coder-32b-instruct:free', name: 'Qwen 2.5 Coder 32B (Free)', provider: 'qwen', source: 'OpenRouter · needs API key' },
+        { id: 'mistralai/mistral-small-24b-instruct-2501:free', name: 'Mistral Small 24B (Free)', provider: 'mistral', source: 'OpenRouter · needs API key' },
+        { id: 'nvidia/nemotron-3.5-lightning:free', name: 'NVIDIA Nemotron 3.5 (Free)', provider: 'nvidia', source: 'OpenRouter · needs API key' },
+        { id: 'liquid/lfm-2.5-2.6b:free', name: 'Liquid LFM 2.6B (Free)', provider: 'liquid', source: 'OpenRouter · needs API key' },
       ];
-      verifiedFree.forEach((m) => models.push(m));
+      verifiedFree.forEach((m) => models.push({ ...m, ...OPENROUTER_ROUTE }));
     }
 
     // 2. Ollama local models
@@ -716,7 +769,9 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
                 id: m.name,
                 name: `${m.name}${m.size ? ` (${(m.size / (1024 * 1024 * 1024)).toFixed(1)}GB)` : ''}`,
                 provider: 'ollama',
-                source: 'local daemon'
+                source: 'local daemon',
+                providerId: 'ollama',
+                baseUrl: ollamaUrl + '/v1',
               });
             });
           }
@@ -750,7 +805,10 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
                 id,
                 name: (typeof item === 'object' && item.name) ? item.name : id,
                 provider: providerType || 'remote',
-                source: 'live api'
+                source: 'live api',
+                providerId: providerType || 'remote',
+                baseUrl: cleanBase,
+                apiKey,
               });
             }
           });
@@ -761,31 +819,34 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
     }
 
     if (providerType === 'nvidia' && (!apiKey || models.length === 0)) {
+      const route = { providerId: 'nvidia', baseUrl: baseUrl || 'https://integrate.api.nvidia.com/v1', apiKey, source: 'NVIDIA Catalog' };
       models.push(
-        { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', provider: 'nvidia', source: 'NVIDIA Catalog' },
-        { id: 'nvidia/llama-3.1-nemotron-70b-instruct', name: 'Nemotron 70B Instruct', provider: 'nvidia', source: 'NVIDIA Catalog' },
-        { id: 'deepseek-ai/deepseek-r1', name: 'DeepSeek R1', provider: 'nvidia', source: 'NVIDIA Catalog' },
-        { id: 'meta/llama-3.1-405b-instruct', name: 'Llama 3.1 405B Instruct', provider: 'nvidia', source: 'NVIDIA Catalog' },
-        { id: 'mistralai/mistral-large-2407', name: 'Mistral Large 2', provider: 'nvidia', source: 'NVIDIA Catalog' }
+        { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct', provider: 'nvidia', ...route },
+        { id: 'nvidia/llama-3.1-nemotron-70b-instruct', name: 'Nemotron 70B Instruct', provider: 'nvidia', ...route },
+        { id: 'deepseek-ai/deepseek-r1', name: 'DeepSeek R1', provider: 'nvidia', ...route },
+        { id: 'meta/llama-3.1-405b-instruct', name: 'Llama 3.1 405B Instruct', provider: 'nvidia', ...route },
+        { id: 'mistralai/mistral-large-2407', name: 'Mistral Large 2', provider: 'nvidia', ...route }
       );
     }
 
     if (providerType === 'openai' && (!apiKey || models.length === 0)) {
+      const route = { providerId: 'openai', baseUrl: baseUrl || 'https://api.openai.com/v1', apiKey, source: 'OpenAI Catalog' };
       models.push(
-        { id: 'gpt-4o', name: 'GPT-4o (Omni)', provider: 'openai', source: 'OpenAI Catalog' },
-        { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast)', provider: 'openai', source: 'OpenAI Catalog' },
-        { id: 'o1', name: 'o1 (Reasoning)', provider: 'openai', source: 'OpenAI Catalog' },
-        { id: 'o3-mini', name: 'o3-mini (Reasoning Fast)', provider: 'openai', source: 'OpenAI Catalog' }
+        { id: 'gpt-4o', name: 'GPT-4o (Omni)', provider: 'openai', ...route },
+        { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast)', provider: 'openai', ...route },
+        { id: 'o1', name: 'o1 (Reasoning)', provider: 'openai', ...route },
+        { id: 'o3-mini', name: 'o3-mini (Reasoning Fast)', provider: 'openai', ...route }
       );
     }
 
     // 4. Anthropic
     if (providerType === 'anthropic' || (baseUrl && baseUrl.includes('anthropic'))) {
+      const route = { providerId: 'anthropic', baseUrl: baseUrl || 'https://api.anthropic.com/v1', apiKey, source: 'Anthropic Catalog' };
       models.push(
-        { id: 'claude-3-7-sonnet-latest', name: 'Claude 3.7 Sonnet (Hybrid Reasoning)', provider: 'anthropic', source: 'Anthropic Catalog' },
-        { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet v2', provider: 'anthropic', source: 'Anthropic Catalog' },
-        { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku (Fast)', provider: 'anthropic', source: 'Anthropic Catalog' },
-        { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', provider: 'anthropic', source: 'Anthropic Catalog' }
+        { id: 'claude-3-7-sonnet-latest', name: 'Claude 3.7 Sonnet (Hybrid Reasoning)', provider: 'anthropic', ...route },
+        { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet v2', provider: 'anthropic', ...route },
+        { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku (Fast)', provider: 'anthropic', ...route },
+        { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', provider: 'anthropic', ...route }
       );
     }
   } catch (err) {

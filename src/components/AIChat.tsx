@@ -28,6 +28,12 @@ const CHAT_AGENTS: ChatAgentOption[] = [
   { id: 'claude', name: 'Claude Code', bin: 'claude', type: 'cli', icon: '🧠', color: '#f06595', badge: 'CLAUDE', description: 'Anthropic Claude Code CLI running locally' },
 ];
 
+/** `cli-tokenharbor` → `Token Harbor` — display name for a discovered provider. */
+function prettyProviderName(m: { providerId?: string; provider?: string }): string {
+  const raw = (m.providerId || m.provider || 'discovered').replace(/^cli-/, '').replace(/[-_]+/g, ' ');
+  return raw.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export const AIChat: React.FC = () => {
   const { 
     activeProvider,
@@ -39,6 +45,7 @@ export const AIChat: React.FC = () => {
     setFileTree,
     addBrainAction,
     updateProvider,
+    upsertProvider,
     updateTabContent,
     openTabs
   } = useAppStore();
@@ -51,7 +58,21 @@ export const AIChat: React.FC = () => {
   const [expandedToolMsgId, setExpandedToolMsgId] = useState<string | null>(null);
 
   // Dynamic Model Scanner state
-  const [scannedModels, setScannedModels] = useState<Array<{ id: string; name: string; provider?: string; size?: string; source?: string }>>([]);
+  // `endpoint`/`apiKey`/`providerId` come from the scanner so that picking a
+  // model configures the *matching* provider, not whichever one happens to be active.
+  const [scannedModels, setScannedModels] = useState<Array<{
+    id: string;
+    name: string;
+    provider?: string;
+    size?: string;
+    source?: string;
+    providerId?: string;
+    baseUrl?: string;
+    apiKey?: string;
+    providerName?: string;
+    requiresKey?: boolean;
+    keyHint?: string;
+  }>>([]);
   const [isScanningModels, setIsScanningModels] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
   
@@ -230,6 +251,41 @@ export const AIChat: React.FC = () => {
       console.error('Scan models error:', err);
     } finally {
       setIsScanningModels(false);
+    }
+  };
+
+  /**
+   * Imports a discovered model by configuring the provider it actually belongs
+   * to (endpoint + credentials supplied by the scanner) and activating it.
+   * Previously only the `model` field of whatever provider happened to be
+   * active was overwritten, so OpenRouter / OpenCode models were routed to the
+   * wrong API and every request failed.
+   */
+  const handleSelectModel = (m: (typeof scannedModels)[number]) => {
+    const endpoint = m.baseUrl || activeProvider?.baseUrl || '';
+    const providerId = m.providerId || activeProvider?.id || 'custom';
+    const prettyName = m.providerName || prettyProviderName(m) || 'Discovered Provider';
+
+    upsertProvider({
+      id: providerId,
+      name: prettyName,
+      baseUrl: endpoint,
+      apiKey: m.apiKey || '',
+      model: m.id,
+      isConnected: Boolean(m.apiKey),
+      icon: prettyName.slice(0, 1).toUpperCase(),
+    });
+    setIsModelPickerOpen(false);
+
+    // Tell the user why a model may still fail after importing it.
+    if (m.requiresKey && !m.apiKey) {
+      const hint = m.keyHint || 'No API key was found for this endpoint.';
+      setMessages((prev) => [...prev, {
+        role: 'system',
+        id: `sys-key-${Date.now()}`,
+        timestamp: Date.now(),
+        content: `🔑 **${prettyName} · ${m.name}** imported, but ${hint}`,
+      }]);
     }
   };
 
@@ -574,36 +630,47 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
           </button>
 
           {isModelPickerOpen && scannedModels.length > 0 && (
-            <div className="absolute right-0 mt-1.5 w-64 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1.5 max-h-64 overflow-y-auto">
+            <div className="absolute right-0 mt-1.5 w-72 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1.5 max-h-64 overflow-y-auto">
               <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider flex justify-between items-center">
                 <span>Live Discovered Models ({scannedModels.length})</span>
                 <button type="button" onClick={() => setIsModelPickerOpen(false)} className="text-text-muted hover:text-text-primary text-xs">✕</button>
               </div>
               <div className="space-y-0.5 mt-1">
-                {scannedModels.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => {
-                      if (activeProvider) {
-                        updateProvider(activeProvider.id, { model: m.id });
-                      }
-                      setIsModelPickerOpen(false);
-                    }}
-                    className={`w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between ${
-                      activeProvider?.model === m.id
-                        ? 'bg-chip text-text-primary font-bold'
-                        : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
-                    }`}
-                  >
-                    <div className="min-w-0 flex-1 pr-1">
-                      <div className="font-mono text-[11px] truncate">{m.name || m.id}</div>
-                      {m.source && <div className="text-[9px] text-text-muted">{m.source}</div>}
-                    </div>
-                    {activeProvider?.model === m.id && <Check size={12} className="text-ok shrink-0" />}
-                  </button>
-                ))}
+                {scannedModels.map((m) => {
+                  let host = '';
+                  try { host = m.baseUrl ? new URL(m.baseUrl).host : ''; } catch {}
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleSelectModel(m)}
+                      className={`w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between ${
+                        activeProvider?.model === m.id
+                          ? 'bg-chip text-text-primary font-bold'
+                          : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                      }`}
+                      title={m.apiKey
+                        ? `Import → ${prettyProviderName(m)} (${host || 'active provider'}) · key ready`
+                        : `Import → ${prettyProviderName(m)} · ${m.keyHint || 'API key required for this endpoint'}`}
+                    >
+                      <div className="min-w-0 flex-1 pr-1">
+                        <div className="font-mono text-[11px] truncate">{m.name || m.id}</div>
+                        <div className="text-[9px] text-text-muted truncate flex items-center gap-1">
+                          <span>{m.source}</span>
+                          {host && <span className="opacity-70">· {host}</span>}
+                          {m.requiresKey && !m.apiKey && <span className="text-warning">· key needed</span>}
+                          {m.apiKey && <span className="text-ok">· key ready</span>}
+                        </div>
+                      </div>
+                      {activeProvider?.model === m.id && <Check size={12} className="text-ok shrink-0" />}
+                    </button>
+                  );
+                })}
               </div>
+              <p className="text-[9px] text-text-muted px-2 py-1.5 border-t border-border mt-1 leading-snug">
+                Picking a model switches the active provider to its own endpoint &amp; key (from
+                opencode.json), so requests go to the right API.
+              </p>
             </div>
           )}
         </div>
