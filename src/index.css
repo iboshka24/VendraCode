@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #30363d transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: #30363d;
+    border-radius: 4px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: #484f58;
+  }
+  
+  body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #0d1117;
+    color: #e6edf3;
+  }
+
+  ::selection {
+    background-color: #7c3aed40;
+    color: #e6edf3;
+  }
+}
+
+@layer components {
+  .vc-panel {
+    @apply bg-surface border-border;
+  }
+
+  .vc-btn {
+    @apply px-3 py-1.5 rounded text-sm font-medium transition-all duration-150 ease-out;
+  }
+
+  .vc-btn-primary {
+    @apply vc-btn bg-primary text-white hover:bg-primary-hover active:scale-[0.98];
+  }
+
+  .vc-btn-ghost {
+    @apply vc-btn bg-transparent text-text-secondary hover:bg-surface-hover hover:text-text-primary;
+  }
+
+  .vc-btn-danger {
+    @apply vc-btn bg-danger/10 text-danger hover:bg-danger/20;
+  }
+
+  .vc-input {
+    @apply w-full bg-background border border-border rounded px-3 py-2 text-sm text-text-primary
+           placeholder-text-muted focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/30
+           transition-colors;
+  }
+
+  .vc-badge {
+    @apply text-xs px-2 py-0.5 rounded-full font-medium;
+  }
+
+  .vc-badge-success {
+    @apply vc-badge bg-success/20 text-success;
+  }
+
+  .vc-badge-warning {
+    @apply vc-badge bg-warning/20 text-warning;
+  }
+
+  .vc-badge-danger {
+    @apply vc-badge bg-danger/20 text-danger;
+  }
+
+  .vc-badge-info {
+    @apply vc-badge bg-accent/20 text-accent;
+  }
+
+  .vc-card {
+    @apply bg-surface border border-border rounded-xl p-5 transition-all duration-200 hover:border-border-light;
+  }
+}
+
+/* Xterm.js overrides */
+.xterm {
+  padding: 8px;
+}
+.xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: #30363d transparent;
+}
