@@ -2,7 +2,8 @@
   "name": "vendracode",
   "version": "1.0.0",
   "description": "VendraCode — Multiplayer AI-native IDE. Your agents, working as one.",
-  "author": "VendraCode Team",
+  "homepage": "https://github.com/ibrohim/VendraCode",
+  "author": "VendraCode Team <team@vendracode.dev>",
   "license": "MIT",
   "main": "electron/main.js",
   "scripts": {
