@@ -37,7 +37,10 @@ export const AIChat: React.FC = () => {
     setAgentStatus, 
     agentStatus,
     setFileTree,
-    addBrainAction
+    addBrainAction,
+    updateProvider,
+    updateTabContent,
+    openTabs
   } = useAppStore();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -46,6 +49,11 @@ export const AIChat: React.FC = () => {
   const [isAgentDropdownOpen, setIsAgentDropdownOpen] = useState(false);
   const [isProviderDropdownOpen, setIsProviderDropdownOpen] = useState(false);
   const [expandedToolMsgId, setExpandedToolMsgId] = useState<string | null>(null);
+
+  // Dynamic Model Scanner state
+  const [scannedModels, setScannedModels] = useState<Array<{ id: string; name: string; provider?: string }>>([]);
+  const [isScanningModels, setIsScanningModels] = useState(false);
+  const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
   
   // Pending approval state
   const [pendingApproval, setPendingApproval] = useState<{
@@ -115,6 +123,20 @@ export const AIChat: React.FC = () => {
         case 'create_file':
         case 'edit_file':
           await api.fs.writeFile(args.path, args.content);
+          if (api.brain?.broadcastTyping) {
+            await api.brain.broadcastTyping({
+              agentId: selectedAgent.id,
+              agentName: selectedAgent.name,
+              filePath: args.path,
+              text: args.content,
+              color: selectedAgent.color
+            });
+          }
+          // Live update matching tab in Monaco editor if open
+          const matchingTab = openTabs.find(t => t.path === args.path || t.name === args.path.split('/').pop());
+          if (matchingTab) {
+            updateTabContent(matchingTab.id, args.content);
+          }
           res = { success: true, path: args.path };
           break;
         case 'delete_file':
@@ -192,123 +214,74 @@ export const AIChat: React.FC = () => {
     }
   };
 
-  // Dispatch message to agent (either native LLM or local CLI process)
-  const sendMessage = async (text: string) => {
-    if (!text.trim()) return;
-
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content: text,
-      id: Date.now().toString(),
-      timestamp: Date.now()
-    };
-
-    let currentMessages = [...messages, userMessage];
-    setMessages(currentMessages);
-    setInputValue('');
-    setAgentStatus?.('running');
-
-    // ─── CASE A: Local CLI Process (e.g. OpenCode, Agy, Cline) ───
-    if (selectedAgent.type === 'cli') {
-      try {
-        const agentThinkingId = `cli-${Date.now()}`;
-        const initialStatusMsg: ChatMessage = {
-          role: 'assistant',
-          id: agentThinkingId,
-          timestamp: Date.now(),
-          content: `⚡ Spawning local **${selectedAgent.name}** process in workspace...\n\nRouting command: \`${selectedAgent.bin} --prompt "${text.replace(/"/g, '\\"')}"\``
-        };
-        currentMessages = [...currentMessages, initialStatusMsg];
-        setMessages(currentMessages);
-
-        // Execute CLI command via os.exec
-        if (window.vendraAPI?.os) {
-          const cliResult = await window.vendraAPI.os.exec(
-            `which ${selectedAgent.bin} && ${selectedAgent.bin} "${text.replace(/"/g, '\\"')}" || echo "[Process]: executed prompt in local worktree."`,
-            workspacePath || undefined
-          );
-
-          // Update brain action
-          if (window.vendraAPI.brain) {
-            await window.vendraAPI.brain.reportAction({
-              agentId: selectedAgent.id,
-              agentName: selectedAgent.name,
-              action: 'cli_run',
-              targetFile: workspacePath || undefined,
-              summary: `Executed prompt via ${selectedAgent.bin}`,
-            });
-          }
-
-          // If files were written or stdout captured, format output cleanly
-          const outputText = cliResult.stdout.trim() || cliResult.stderr.trim() || 'Process completed successfully.';
-
-          setMessages(prev => prev.map(m => {
-            if (m.id === agentThinkingId) {
-              return {
-                ...m,
-                content: `### ${selectedAgent.icon} ${selectedAgent.name} Output\n\n\`\`\`bash\n${outputText}\n\`\`\`\n\n✓ All changes synced with **The Shared Brain** and Git worktree.`
-              };
-            }
-            return m;
-          }));
-
-          // Reload workspace tree
-          if (workspacePath) {
-            const entries = await window.vendraAPI.fs.readDir(workspacePath);
-            setFileTree(entries);
-          }
-        }
-      } catch (err: any) {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          id: Date.now().toString(),
-          timestamp: Date.now(),
-          content: `⚠️ Failed to execute ${selectedAgent.name}: ${err.message}`
-        }]);
-      } finally {
-        setAgentStatus?.('idle');
+  const handleScanModels = async () => {
+    setIsScanningModels(true);
+    try {
+      if (window.vendraAPI?.scanner) {
+        const list = await window.vendraAPI.scanner.scanModels({
+          providerType: selectedAgent.id === 'opencode' ? 'opencode' : activeProvider?.id,
+          baseUrl: activeProvider?.baseUrl,
+          apiKey: activeProvider?.apiKey
+        });
+        setScannedModels(list);
+        setIsModelPickerOpen(true);
       }
+    } catch (err) {
+      console.error('Scan models error:', err);
+    } finally {
+      setIsScanningModels(false);
+    }
+  };
+
+  const runAutonomousAgentLoop = async (promptText: string, baseMessages: ChatMessage[], agentName: string) => {
+    if (!activeProvider) {
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        content: `⚠️ No active LLM provider configured. Please configure an API key for NVIDIA NIM, OpenAI, or your provider in Preferences.`
+      }]);
       return;
     }
-
-    // ─── CASE B: Vendra AI Native (Hermes Agent with tools) ───
-    if (!activeProvider) return;
 
     try {
       const systemMessage: ChatMessage = {
         id: 'system',
         role: 'system',
         timestamp: Date.now(),
-        content: `You are VendraCode AI, an expert agentic assistant with Hermes Web Research and Computer-Use skills.
-You have access to:
-- Filesystem: create_file, edit_file, delete_file, read_file, search_codebase, list_files
-- Shell execution: run_command
-- Hermes Web Research: web_search (DuckDuckGo Lite), fetch_url (browser article extraction)
-- Hermes Computer-Use: take_screenshot (capture screen), get_system_info (hardware/OS specs)
-Always explain what you're doing clearly before using tools. Workspace path: ${workspacePath}`
+        content: `You are ${agentName}, an expert autonomous AI software engineer in VendraCode IDE.
+You coordinate with teammates in The Shared Brain.
+When asked to write code or create features, ALWAYS use your tools:
+- create_file: create new files in the workspace (with full complete code, no placeholders)
+- edit_file: rewrite or patch files
+- read_file: inspect existing code
+- run_command: execute bash commands, tests, or builds
+- search_codebase: locate symbols and patterns
+- list_files: explore project directories
+- web_search: search online documentation
+Workspace directory: ${workspacePath || '/home/ibrohim'}`
       };
 
+      let currentMsgs = [...baseMessages];
       let keepRunning = true;
       let turns = 0;
       const MAX_TURNS = 10;
 
       while (keepRunning && turns < MAX_TURNS) {
         turns++;
-        const apiMessages = [systemMessage, ...currentMessages].map(m => {
-          return {
-            role: m.role,
-            content: m.content || '',
-            ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
-            ...(m.toolName ? { name: m.toolName } : {}),
-            ...(m.toolCalls ? { tool_calls: m.toolCalls } : {})
-          };
-        });
+        const apiMessages = [systemMessage, ...currentMsgs].map(m => ({
+          role: m.role,
+          content: m.content || '',
+          ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
+          ...(m.toolName ? { name: m.toolName } : {}),
+          ...(m.toolCalls ? { tool_calls: m.toolCalls } : {})
+        }));
 
         const response = await fetch(`${activeProvider.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${activeProvider.apiKey}`
+            ...(activeProvider.apiKey ? { 'Authorization': `Bearer ${activeProvider.apiKey}` } : {})
           },
           body: JSON.stringify({
             model: activeProvider.model,
@@ -333,13 +306,12 @@ Always explain what you're doing clearly before using tools. Workspace path: ${w
           toolCalls: responseMessage.tool_calls
         };
 
-        currentMessages = [...currentMessages, aiMessage];
-        setMessages(currentMessages);
+        currentMsgs = [...currentMsgs, aiMessage];
+        setMessages(currentMsgs);
 
         if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
           for (const toolCall of responseMessage.tool_calls) {
             const toolResult = await executeTool(toolCall);
-            
             const toolResultMessage: ChatMessage = {
               role: 'tool',
               toolCallId: toolCall.id,
@@ -348,21 +320,109 @@ Always explain what you're doing clearly before using tools. Workspace path: ${w
               id: Date.now().toString() + Math.random().toString(),
               timestamp: Date.now()
             };
-            
-            currentMessages = [...currentMessages, toolResultMessage];
-            setMessages(currentMessages);
+            currentMsgs = [...currentMsgs, toolResultMessage];
+            setMessages(currentMsgs);
           }
         } else {
           keepRunning = false;
         }
       }
-    } catch (error: any) {
+    } catch (err: any) {
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: `⚠️ Error: ${error.message}`,
         id: Date.now().toString(),
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        content: `⚠️ Error executing agent: ${err.message}`
       }]);
+    }
+  };
+
+  // Dispatch message to agent (either native LLM or local CLI process)
+  const sendMessage = async (text: string) => {
+    if (!text.trim()) return;
+
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: text,
+      id: Date.now().toString(),
+      timestamp: Date.now()
+    };
+
+    let currentMessages = [...messages, userMessage];
+    setMessages(currentMessages);
+    setInputValue('');
+    setAgentStatus?.('running');
+
+    // ─── CASE A: Local CLI Process (e.g. OpenCode, Agy, Cline) ───
+    if (selectedAgent.type === 'cli') {
+      try {
+        const agentThinkingId = `cli-${Date.now()}`;
+        const initialStatusMsg: ChatMessage = {
+          role: 'assistant',
+          id: agentThinkingId,
+          timestamp: Date.now(),
+          content: `⚡ Spawning local **${selectedAgent.name}** process in workspace...\n\nRouting command: \`${selectedAgent.bin} run "${text.replace(/"/g, '\\"')}"\``
+        };
+        currentMessages = [...currentMessages, initialStatusMsg];
+        setMessages(currentMessages);
+
+        let cliResult = { stdout: '', stderr: '', error: null as any, code: 0 };
+        if (window.vendraAPI?.os) {
+          const binPath = selectedAgent.id === 'opencode'
+            ? '/home/ibrohim/.opencode/bin/opencode'
+            : selectedAgent.bin;
+          cliResult = await window.vendraAPI.os.exec(
+            `${binPath} run --auto "${text.replace(/"/g, '\\"')}"`,
+            workspacePath || undefined
+          );
+        }
+
+        const combinedOutput = (cliResult.stdout || '') + (cliResult.stderr || '');
+        const isQuotaError = combinedOutput.includes('provider.quota') || combinedOutput.includes('402') || combinedOutput.includes('credits');
+
+        if (isQuotaError || (cliResult.error && !cliResult.stdout)) {
+          // OpenRouter quota or provider error: notify and seamlessly run autonomous engine
+          setMessages(prev => prev.map(m => {
+            if (m.id === agentThinkingId) {
+              return {
+                ...m,
+                content: `⚡ **OpenCode CLI Notice**: Local OpenRouter quota exceeded.\n\n🔄 **Autonomous Engine Fallback**: Handing task over to VendraCode Engine (${activeProvider?.name || 'NVIDIA NIM'} · ${activeProvider?.model}) under OpenCode persona...`
+              };
+            }
+            return m;
+          }));
+
+          await runAutonomousAgentLoop(text, currentMessages, selectedAgent.name);
+          return;
+        }
+
+        // Clean successful CLI output
+        const outputText = cliResult.stdout.trim() || cliResult.stderr.trim() || 'Process completed successfully.';
+        setMessages(prev => prev.map(m => {
+          if (m.id === agentThinkingId) {
+            return {
+              ...m,
+              content: `### ${selectedAgent.icon} ${selectedAgent.name} Output\n\n\`\`\`bash\n${outputText}\n\`\`\`\n\n✓ All changes synced with **The Shared Brain** and Git worktree.`
+            };
+          }
+          return m;
+        }));
+
+        if (workspacePath && window.vendraAPI?.fs) {
+          const entries = await window.vendraAPI.fs.readDir(workspacePath);
+          setFileTree(entries);
+        }
+      } catch (err: any) {
+        await runAutonomousAgentLoop(text, currentMessages, selectedAgent.name);
+      } finally {
+        setAgentStatus?.('idle');
+      }
+      return;
+    }
+
+    // ─── CASE B: Vendra AI Native (Hermes Agent with tools) ───
+    try {
+      await runAutonomousAgentLoop(text, currentMessages, 'VendraCode AI');
     } finally {
       setAgentStatus?.('idle');
     }
@@ -490,6 +550,60 @@ Always explain what you're doing clearly before using tools. Workspace path: ${w
                   <span className="text-[10px] text-text-muted font-mono">{p.model}</span>
                 </button>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* Dynamic Model Scanner Button & Dropdown */}
+        <div className="relative">
+          <button 
+            type="button"
+            className="agentpill flex items-center gap-1.5"
+            onClick={handleScanModels}
+            title="Scan live models for active provider/CLI"
+          >
+            {isScanningModels ? (
+              <Loader2 className="w-3 h-3 text-ok animate-spin" />
+            ) : (
+              <Cpu className="w-3 h-3 text-ok" />
+            )}
+            <span className="font-mono text-[11px] truncate max-w-[85px]">
+              {activeProvider?.model || 'Scan Models'}
+            </span>
+            <ChevronDown className="w-3 h-3 text-text-muted" />
+          </button>
+
+          {isModelPickerOpen && scannedModels.length > 0 && (
+            <div className="absolute right-0 mt-1.5 w-64 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1.5 max-h-64 overflow-y-auto">
+              <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider flex justify-between items-center">
+                <span>Live Discovered Models ({scannedModels.length})</span>
+                <button type="button" onClick={() => setIsModelPickerOpen(false)} className="text-text-muted hover:text-text-primary text-xs">✕</button>
+              </div>
+              <div className="space-y-0.5 mt-1">
+                {scannedModels.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      if (activeProvider) {
+                        updateProvider(activeProvider.id, { model: m.id });
+                      }
+                      setIsModelPickerOpen(false);
+                    }}
+                    className={`w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between ${
+                      activeProvider?.model === m.id
+                        ? 'bg-chip text-text-primary font-bold'
+                        : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1 pr-1">
+                      <div className="font-mono text-[11px] truncate">{m.name || m.id}</div>
+                      {m.source && <div className="text-[9px] text-text-muted">{m.source}</div>}
+                    </div>
+                    {activeProvider?.model === m.id && <Check size={12} className="text-ok shrink-0" />}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>

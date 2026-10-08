@@ -10,6 +10,8 @@ import { motion } from 'framer-motion';
 export const Settings: React.FC = () => {
   const { settings, updateSettings, updateProvider, settingsTab, setSettingsTab, localCLIs } = useAppStore();
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
+  const [scanningProvider, setScanningProvider] = useState<string | null>(null);
+  const [scannedModelsByProvider, setScannedModelsByProvider] = useState<Record<string, any[]>>({});
 
   const tabs = [
     { id: 'providers', label: 'Agents & Providers', icon: <Bot size={16} /> },
@@ -19,6 +21,24 @@ export const Settings: React.FC = () => {
     { id: 'sessions', label: 'Sessions', icon: <GitBranch size={16} /> },
     { id: 'team', label: 'Team', icon: <Users size={16} /> },
   ] as const;
+
+  const handleScanProviderModels = async (provider: ProviderConfig) => {
+    setScanningProvider(provider.id);
+    try {
+      if (window.vendraAPI?.scanner) {
+        const models = await window.vendraAPI.scanner.scanModels({
+          providerType: provider.id,
+          baseUrl: provider.baseUrl,
+          apiKey: provider.apiKey,
+        });
+        setScannedModelsByProvider(prev => ({ ...prev, [provider.id]: models }));
+      }
+    } catch (err) {
+      console.error('Scan failed:', err);
+    } finally {
+      setScanningProvider(null);
+    }
+  };
 
   const handleTestConnection = async (provider: ProviderConfig) => {
     setTestingConnection(provider.id);
@@ -244,7 +264,14 @@ export const Settings: React.FC = () => {
                           />
                         </div>
                         <div className="md:col-span-2">
-                          <label className="block text-[11px] text-text-muted mb-1 font-medium">Model ID</label>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[11px] text-text-muted font-medium">Model ID</label>
+                            {scannedModelsByProvider[provider.id] && (
+                              <span className="text-[10px] text-ok font-mono">
+                                {scannedModelsByProvider[provider.id].length} models discovered
+                              </span>
+                            )}
+                          </div>
                           <input 
                             type="text" 
                             value={provider.model}
@@ -252,22 +279,61 @@ export const Settings: React.FC = () => {
                             className="vc-input font-mono text-[11px]"
                             placeholder="e.g. gpt-4o, claude-3-7-sonnet, meta/llama-3.3-70b-instruct"
                           />
+
+                          {/* Scanned models list */}
+                          {scannedModelsByProvider[provider.id] && scannedModelsByProvider[provider.id].length > 0 && (
+                            <div className="mt-2 p-2 bg-bgdeep rounded-lg border border-border max-h-36 overflow-y-auto space-y-1">
+                              <div className="text-[10px] text-text-muted font-semibold uppercase tracking-wider mb-1">
+                                Detected Models (click to select)
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {scannedModelsByProvider[provider.id].map(m => (
+                                  <button
+                                    key={m.id}
+                                    type="button"
+                                    onClick={() => updateProvider(provider.id, { model: m.id })}
+                                    className={`px-2 py-0.5 text-[10px] rounded font-mono transition-colors border ${
+                                      provider.model === m.id
+                                        ? 'bg-accent/20 border-accent text-accent font-bold'
+                                        : 'bg-chip border-border text-text-secondary hover:text-text-primary hover:border-border-light'
+                                    }`}
+                                  >
+                                    {m.name || m.id}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                       
-                      <div className="flex justify-end">
+                      <div className="flex items-center justify-end gap-2">
+                        <button 
+                          type="button"
+                          onClick={() => handleScanProviderModels(provider)}
+                          disabled={scanningProvider === provider.id}
+                          className="btn btn-ghost text-xs h-7 gap-1.5"
+                        >
+                          {scanningProvider === provider.id ? (
+                            <span className="w-3 h-3 border-2 border-ok border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Bot size={13} className="text-ok" />
+                          )}
+                          <span>Scan Live Models</span>
+                        </button>
+
                         <button 
                           type="button"
                           onClick={() => handleTestConnection(provider)}
                           disabled={testingConnection === provider.id || !provider.baseUrl}
-                          className="btn btn-ghost text-xs h-7"
+                          className="btn btn-ghost text-xs h-7 gap-1.5"
                         >
                           {testingConnection === provider.id ? (
                             <span className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
                           ) : (
                             <TestTube size={13} />
                           )}
-                          Test Connection
+                          <span>Test Connection</span>
                         </button>
                       </div>
                     </div>

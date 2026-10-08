@@ -3,7 +3,37 @@ const path = require('path');
 const fs = require('fs');
 const { exec, spawn } = require('child_process');
 
+// Ensure PATH includes user bin folders where opencode, agy, etc. are located
+const homeDir = process.env.HOME || '';
+const extraPaths = [
+  path.join(homeDir, '.opencode', 'bin'),
+  path.join(homeDir, '.local', 'bin'),
+  path.join(homeDir, '.gemini', 'antigravity-cli', 'bin'),
+  path.join(homeDir, '.tokenharbor', 'bin'),
+  '/usr/local/bin',
+  '/usr/bin',
+  '/bin',
+];
+process.env.PATH = Array.from(new Set([...extraPaths, ...(process.env.PATH ? process.env.PATH.split(':') : [])])).join(':');
+
+let nodePty = null;
+try {
+  nodePty = require('node-pty');
+  console.log('[VendraCode] node-pty loaded successfully');
+} catch (e) {
+  try {
+    const unpackedPath = path.join(process.resourcesPath || '', 'app.asar.unpacked', 'node_modules', 'node-pty');
+    if (fs.existsSync(unpackedPath)) {
+      nodePty = require(unpackedPath);
+      console.log('[VendraCode] node-pty loaded from app.asar.unpacked');
+    }
+  } catch (e2) {
+    console.warn('[VendraCode] node-pty load warning:', e.message);
+  }
+}
+
 let mainWindow;
+let ptyProcess = null;
 let terminalProcess = null;
 
 function createWindow() {
@@ -141,41 +171,88 @@ ipcMain.handle('fs:search', async (_event, dirPath, query) => {
 // ─── Terminal IPC ──────────────────────────────────────────────────
 
 ipcMain.on('terminal:start', (event, cwd) => {
+  if (ptyProcess) {
+    try {
+      if (typeof ptyProcess.kill === 'function') ptyProcess.kill();
+    } catch {}
+    ptyProcess = null;
+  }
   if (terminalProcess) {
-    terminalProcess.kill();
+    try { terminalProcess.kill(); } catch {}
+    terminalProcess = null;
   }
 
-  const shellCmd = process.platform === 'win32' ? 'cmd.exe' : (process.env.SHELL || '/bin/bash');
-  const shellArgs = process.platform === 'win32' ? [] : ['-l'];
+  const shellCmd = process.platform === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash');
+  const targetCwd = (cwd && fs.existsSync(cwd)) ? cwd : (process.env.HOME || process.cwd());
 
+  if (nodePty) {
+    try {
+      ptyProcess = nodePty.spawn(shellCmd, [], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd: targetCwd,
+        env: {
+          ...process.env,
+          TERM: 'xterm-256color',
+          COLORTERM: 'truecolor',
+        },
+      });
+
+      ptyProcess.onData((data) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('terminal:data', data);
+        }
+      });
+
+      ptyProcess.onExit(({ exitCode }) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('terminal:exit', exitCode);
+        }
+        ptyProcess = null;
+      });
+      return;
+    } catch (err) {
+      console.error('[VendraCode] node-pty spawn failed, falling back:', err);
+    }
+  }
+
+  // Fallback using child_process spawn
+  const shellArgs = process.platform === 'win32' ? [] : ['-i'];
   terminalProcess = spawn(shellCmd, shellArgs, {
-    cwd: cwd || process.env.HOME,
+    cwd: targetCwd,
     env: { ...process.env, TERM: 'xterm-256color' },
     shell: false,
   });
 
   terminalProcess.stdout.on('data', (data) => {
-    if (mainWindow) mainWindow.webContents.send('terminal:data', data.toString());
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:data', data.toString());
   });
 
   terminalProcess.stderr.on('data', (data) => {
-    if (mainWindow) mainWindow.webContents.send('terminal:data', data.toString());
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:data', data.toString());
   });
 
   terminalProcess.on('exit', (code) => {
-    if (mainWindow) mainWindow.webContents.send('terminal:exit', code);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:exit', code);
     terminalProcess = null;
   });
 });
 
 ipcMain.on('terminal:input', (_event, data) => {
-  if (terminalProcess && terminalProcess.stdin.writable) {
+  if (ptyProcess && typeof ptyProcess.write === 'function') {
+    ptyProcess.write(data);
+  } else if (terminalProcess && terminalProcess.stdin && terminalProcess.stdin.writable) {
     terminalProcess.stdin.write(data);
   }
 });
 
 ipcMain.on('terminal:resize', (_event, cols, rows) => {
-  // No-op for child_process spawn; node-pty would support this
+  if (ptyProcess && typeof ptyProcess.resize === 'function') {
+    try {
+      ptyProcess.resize(Math.max(cols || 80, 10), Math.max(rows || 24, 5));
+    } catch (err) {}
+  }
 });
 
 // ─── Command Execution (for AI agent) ──────────────────────────────
@@ -464,4 +541,124 @@ ipcMain.handle('cli:stopAgent', async (_event, agentId) => {
     }
   }
   return { success: false, error: 'Agent not found' };
+});
+
+// ─── Live Dynamic Model Scanner IPC ────────────────────────────────
+ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, apiKey }) => {
+  const models = [];
+  const home = process.env.HOME || '';
+
+  try {
+    // 1. OpenCode provider models
+    if (providerType === 'opencode' || !providerType) {
+      const configPath = path.join(home, '.config', 'opencode', 'opencode.json');
+      if (fs.existsSync(configPath)) {
+        try {
+          const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          if (cfg.provider) {
+            for (const [pName, pConfig] of Object.entries(cfg.provider)) {
+              if (pConfig.models && typeof pConfig.models === 'object') {
+                for (const mId of Object.keys(pConfig.models)) {
+                  models.push({
+                    id: `${pName}/${mId}`,
+                    name: `${mId} · ${pName}`,
+                    provider: 'opencode',
+                    source: 'opencode.json'
+                  });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('OpenCode config parse warning:', e);
+        }
+      }
+    }
+
+    // 2. Ollama local models
+    if (providerType === 'ollama' || (!providerType && baseUrl && baseUrl.includes('11434'))) {
+      const ollamaUrl = (baseUrl || 'http://127.0.0.1:11434').replace(/\/v1\/?$/, '');
+      try {
+        const res = await fetch(`${ollamaUrl}/api/tags`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.models)) {
+            data.models.forEach((m) => {
+              models.push({
+                id: m.name,
+                name: `${m.name}${m.size ? ` (${(m.size / (1024 * 1024 * 1024)).toFixed(1)}GB)` : ''}`,
+                provider: 'ollama',
+                source: 'local daemon'
+              });
+            });
+          }
+        }
+      } catch (err) {}
+    }
+
+    // 3. OpenAI / NVIDIA NIM / OpenRouter / DeepSeek / Custom V1 APIs
+    if (baseUrl && apiKey && (providerType === 'openai' || providerType === 'nvidia' || providerType === 'openrouter' || providerType === 'custom')) {
+      const cleanBase = baseUrl.replace(/\/$/, '');
+      const modelsEndpoint = cleanBase.endsWith('/v1') ? `${cleanBase}/models` : `${cleanBase}/v1/models`;
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 6000);
+        const res = await fetch(modelsEndpoint, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'User-Agent': 'VendraCode/1.0.0'
+          },
+          signal: controller.signal
+        });
+        clearTimeout(timeout);
+
+        if (res.ok) {
+          const data = await res.json();
+          const list = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
+          list.forEach((item) => {
+            const id = typeof item === 'string' ? item : item.id;
+            if (id) {
+              models.push({
+                id,
+                name: (typeof item === 'object' && item.name) ? item.name : id,
+                provider: providerType || 'remote',
+                source: 'live api'
+              });
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('Live model scan failed for', baseUrl, err.message);
+      }
+    }
+
+    // 4. Anthropic
+    if (providerType === 'anthropic' || (baseUrl && baseUrl.includes('anthropic'))) {
+      models.push(
+        { id: 'claude-3-7-sonnet-latest', name: 'Claude 3.7 Sonnet (Hybrid Reasoning)', provider: 'anthropic' },
+        { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet v2', provider: 'anthropic' },
+        { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku (Fast)', provider: 'anthropic' },
+        { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', provider: 'anthropic' }
+      );
+    }
+  } catch (err) {
+    console.error('Model scan failed:', err);
+  }
+
+  // Deduplicate
+  const seen = new Set();
+  const deduped = [];
+  for (const m of models) {
+    if (!seen.has(m.id)) {
+      seen.add(m.id);
+      deduped.push(m);
+    }
+  }
+  return deduped;
+});
+
+// ─── Brain Agent Typing Broadcast ──────────────────────────────────
+ipcMain.handle('brain:broadcastTyping', async (_event, payload) => {
+  broadcastToWindow('brain:agentTyping', payload);
+  return { success: true };
 });

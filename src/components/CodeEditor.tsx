@@ -81,6 +81,7 @@ export function CodeEditor() {
       <div className="flex-1 min-h-0 bg-background p-3">
         <LiveAgentStream
           filename={activeTab?.name || 'src/auth/authenticate.ts'}
+          initialContent={activeTab?.content}
           onApplyToFile={(code) => {
             if (activeTabId) {
               updateTabContent(activeTabId, code);

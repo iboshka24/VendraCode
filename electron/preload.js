@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld('vendraAPI', {
     acquireLock: (opts) => ipcRenderer.invoke('brain:acquireLock', opts),
     releaseLock: (opts) => ipcRenderer.invoke('brain:releaseLock', opts),
     reportAction: (action) => ipcRenderer.invoke('brain:reportAction', action),
+    broadcastTyping: (payload) => ipcRenderer.invoke('brain:broadcastTyping', payload),
     onLocksUpdated: (callback) => {
       const handler = (_event, data) => callback(data);
       ipcRenderer.on('brain:locksUpdated', handler);
@@ -89,6 +90,16 @@ contextBridge.exposeInMainWorld('vendraAPI', {
       ipcRenderer.on('brain:actionRecorded', handler);
       return () => ipcRenderer.removeListener('brain:actionRecorded', handler);
     },
+    onAgentTyping: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('brain:agentTyping', handler);
+      return () => ipcRenderer.removeListener('brain:agentTyping', handler);
+    },
+  },
+
+  // Dynamic Model Scanner
+  scanner: {
+    scanModels: (opts) => ipcRenderer.invoke('scanner:scanModels', opts),
   },
 
   // Workspace Watcher

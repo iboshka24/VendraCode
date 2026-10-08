@@ -46,8 +46,13 @@ export interface VendraAPI {
     acquireLock: (opts: { filePath: string; agentId: string; agentName: string }) => Promise<{ success: boolean; conflict?: boolean; lockedBy?: BrainLock; warning?: string }>;
     releaseLock: (opts: { filePath: string; agentId: string }) => Promise<{ success: boolean }>;
     reportAction: (action: Omit<BrainAction, 'id' | 'timestamp'>) => Promise<BrainAction>;
+    broadcastTyping: (payload: { agentId: string; agentName: string; filePath: string; lineNum?: number; text?: string; color?: string }) => Promise<{ success: boolean }>;
     onLocksUpdated: (callback: (locks: Record<string, BrainLock>) => void) => () => void;
     onActionRecorded: (callback: (action: BrainAction) => void) => () => void;
+    onAgentTyping: (callback: (payload: { agentId: string; agentName: string; filePath: string; lineNum?: number; text?: string; color?: string }) => void) => () => void;
+  };
+  scanner: {
+    scanModels: (opts: { providerType?: string; baseUrl?: string; apiKey?: string }) => Promise<Array<{ id: string; name: string; provider?: string; size?: string; source?: string }>>;
   };
   workspace: {
     watch: (path: string) => Promise<{ success: boolean; error?: string }>;

@@ -93,11 +93,86 @@ const LIVE_CODE_SCRIPT: ScriptLine[] = [
   }
 ];
 
+function tokenizeCodeLine(text: string): Array<{ text: string; color: string }> {
+  if (!text) return [];
+  if (text.trim().startsWith('//') || text.trim().startsWith('#')) {
+    return [{ text, color: '#6a9955' }];
+  }
+
+  const regex = /(\b(?:import|export|from|async|await|function|const|let|var|return|if|else|switch|case|class|interface|type|extends|implements|try|catch|finally|throw|new|typeof|in|of|default)\b|".*?"|'.*?'|`.*?`|[{}()[\];,]|\b\d+\b|[a-zA-Z_$][a-zA-Z0-9_$]*|[^\s\w]+|\s+)/g;
+
+  const tokens: Array<{ text: string; color: string }> = [];
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    const val = match[0];
+    let color = '#d4d4d4';
+
+    if (/^(?:import|export|from|async|await|function|const|let|var|return|if|else|switch|case|class|interface|type|extends|implements|try|catch|finally|throw|new|typeof|in|of|default)$/.test(val)) {
+      color = '#c586c0';
+    } else if (/^(".*?"|'.*?'|`.*?`)$/.test(val)) {
+      color = '#ce9178';
+    } else if (/^\d+$/.test(val)) {
+      color = '#b5cea8';
+    } else if (/^[{}()[\];,]$/.test(val)) {
+      color = '#e0a336';
+    } else if (/^[A-Z][a-zA-Z0-9_$]*$/.test(val)) {
+      color = '#4ec9b0';
+    } else if (text.slice(regex.lastIndex).trimStart().startsWith('(')) {
+      color = '#dcdcaa';
+    } else {
+      color = '#9cdcfe';
+    }
+
+    tokens.push({ text: val, color });
+  }
+
+  if (tokens.length === 0) {
+    tokens.push({ text, color: '#d4d4d4' });
+  }
+  return tokens;
+}
+
+function buildScriptFromContent(content: string): ScriptLine[] {
+  const lines = content.split('\n');
+  const agentPool = [
+    { author: 'OpenCode (You)', role: 'OpenCode CLI', color: '#ffa94d' },
+    { author: 'Claude (Alice)', role: 'Claude Code', color: '#f06595' },
+    { author: 'Codex (Chen)', role: 'Codex Agent', color: '#4dabf7' },
+    { author: 'Cline (Bob)', role: 'Cline CLI', color: '#38d9a9' },
+  ];
+
+  const script: ScriptLine[] = [];
+  for (let i = 0; i < lines.length && script.length < 30; i++) {
+    const raw = lines[i];
+    if (!raw.trim() && script.length === 0) continue;
+    const agent = agentPool[script.length % agentPool.length];
+    script.push({
+      num: i + 1,
+      author: agent.author,
+      role: agent.role,
+      color: agent.color,
+      text: raw,
+      syntaxTokens: tokenizeCodeLine(raw),
+    });
+  }
+
+  return script.length > 0 ? script : LIVE_CODE_SCRIPT;
+}
+
 export const LiveAgentStream: React.FC<{
   filename?: string;
+  initialContent?: string;
   onApplyToFile?: (content: string) => void;
   onClose?: () => void;
-}> = ({ filename = 'src/auth/authenticate.ts', onApplyToFile, onClose }) => {
+}> = ({ filename = 'src/auth/authenticate.ts', initialContent, onApplyToFile, onClose }) => {
+  const activeScript = React.useMemo(() => {
+    if (initialContent && initialContent.trim().length > 10) {
+      return buildScriptFromContent(initialContent);
+    }
+    return LIVE_CODE_SCRIPT;
+  }, [initialContent]);
+
   const [isPlaying, setIsPlaying] = useState(true);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
@@ -127,7 +202,7 @@ export const LiveAgentStream: React.FC<{
   useEffect(() => {
     if (!isPlaying) return;
 
-    const currentLine = LIVE_CODE_SCRIPT[activeLineIdx];
+    const currentLine = activeScript[activeLineIdx];
     if (!currentLine) {
       // Loop after small pause
       const timeout = setTimeout(() => {
@@ -163,12 +238,12 @@ export const LiveAgentStream: React.FC<{
     }, tickMs);
 
     return () => clearTimeout(timer);
-  }, [isPlaying, activeLineIdx, charOffset, speedMultiplier]);
+  }, [isPlaying, activeLineIdx, charOffset, speedMultiplier, activeScript]);
 
-  const activeLine = LIVE_CODE_SCRIPT[activeLineIdx];
+  const activeLine = activeScript[activeLineIdx];
 
   const getFullCode = () => {
-    return LIVE_CODE_SCRIPT.map(l => l.text).join('\n');
+    return activeScript.map(l => l.text).join('\n');
   };
 
   return (
@@ -254,7 +329,7 @@ export const LiveAgentStream: React.FC<{
         </div>
 
         {/* Live Typing Lines */}
-        {LIVE_CODE_SCRIPT.map((line, idx) => {
+        {activeScript.map((line, idx) => {
           const isCompleted = completedLines.includes(line.num);
           const isCurrentlyTyping = activeLine && activeLine.num === line.num;
 

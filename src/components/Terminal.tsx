@@ -89,9 +89,20 @@ export function TerminalPanel() {
         term.writeln('');
       }
 
+      const syncResize = () => {
+        try {
+          fitAddon.fit();
+          if (window.vendraAPI?.terminal?.resize && term.cols && term.rows) {
+            window.vendraAPI.terminal.resize(term.cols, term.rows);
+          }
+        } catch {}
+      };
+
+      setTimeout(syncResize, 50);
+
       // Handle resize
       const resizeObserver = new ResizeObserver(() => {
-        try { fitAddon.fit(); } catch {}
+        syncResize();
       });
       resizeObserver.observe(termRef.current);
 
