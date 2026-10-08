@@ -320,3 +320,18 @@
   margin-left: 2px;
   cursor: pointer;
 }
+
+/* ─── Monaco remote-edit badge (view zone) ──────────────────────── */
+.vc-remote-badge {
+  display: flex;
+  align-items: center;
+  height: 16px;
+  padding-left: 60px; /* clears Monaco's line-number gutter */
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  opacity: 0.9;
+  pointer-events: none;
+  user-select: none;
+}

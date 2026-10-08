@@ -30,13 +30,16 @@ export function useBrainSync() {
     const customUrl = localStorage.getItem('vendracode-brain-url');
     if (customUrl) setBrainURL(customUrl);
 
-    const storedSession = localStorage.getItem('vendracode-session');
-    if (storedSession) setBrainSessionId(storedSession);
+    // Display name shown to teammates next to cursors/diffs. Defaults to the
+    // OS username; can be overridden (also how two IDE instances on one
+    // machine get distinct identities).
+    const displayName = localStorage.getItem('vendracode-peer-name') || undefined;
+    if (displayName) brainClient.setIdentity(displayName);
 
     if (window.vendraAPI?.os?.userInfo) {
       window.vendraAPI.os.userInfo()
-        .then((info) => brainClient.setIdentity(info?.username || 'You'))
-        .catch(() => brainClient.setIdentity('You'));
+        .then((info) => brainClient.setIdentity(displayName || info?.username || 'You'))
+        .catch(() => brainClient.setIdentity(displayName || 'You'));
     }
 
     const unsubscribe = brainClient.subscribe((event) => {

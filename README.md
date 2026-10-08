@@ -47,7 +47,7 @@ VendraCode is an open-source, multiplayer AI-native development environment (IDE
 |-------|-----------|
 | Desktop Shell | Electron 29 |
 | UI Framework | React 18 + TypeScript |
-| Code Editor | Monaco Editor |
+| Code Editor | Monaco Editor (bundled locally, no runtime CDN) |
 | Terminal | xterm.js |
 | Styling | Tailwind CSS |
 | Animations | Framer Motion |
@@ -174,6 +174,8 @@ The app talks to a Cloudflare Worker over a single WebSocket (`wss://brain.vendr
 | `repo:set` → `repo:updated` | peer → peers | Shared GitHub repository link |
 | `presence:set` → `peers:list` | peer → peers | Display name for cursors & badges |
 | `session:init` / `peer:joined` / `peer:left` / `peers:list` | worker → peer | Session state and presence |
+
+Live diffs are broadcast as **workspace-relative** paths (`src/utils/workspacePath.ts`), so teammates whose checkouts live at different local paths still resolve the same file. Your display name defaults to your OS username and can be overridden with `localStorage.setItem('vendracode-peer-name', 'Alice')`.
 
 All peers of a session are routed to the same **Durable Object** (`SessionCoordinator`, one per session id), because Cloudflare Workers isolates do not share in-memory state — a plain `Map` silently drops messages between peers that land on different isolates. The hub uses the **WebSocket Hibernation API**, so idle sockets cost no CPU/duration, and `repoUrl` + file locks are persisted in the object's storage.
 

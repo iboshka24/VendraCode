@@ -142,6 +142,16 @@ const loadSettings = (): AppSettings => {
   };
 };
 
+/** Session id the user last used, restored synchronously to avoid a
+ *  connect → reconnect round trip on boot. */
+const loadBrainSession = (): string => {
+  try {
+    return localStorage.getItem('vendracode-session') || 'default-session';
+  } catch {
+    return 'default-session';
+  }
+};
+
 /** Resolves the provider the user last picked (survives restarts). */
 const resolveActiveProvider = (): ProviderConfig => {
   const settings = loadSettings();
@@ -425,7 +435,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   addBrainAction: (action) => set((s) => ({ brainActions: [action, ...s.brainActions].slice(0, 100) })),
 
   // Cloudflare Edge Brain (multiplayer live diffs)
-  brainSessionId: 'default-session',
+  brainSessionId: loadBrainSession(),
   setBrainSessionId: (id) => {
     const value = id || 'default-session';
     try { localStorage.setItem('vendracode-session', value); } catch {}

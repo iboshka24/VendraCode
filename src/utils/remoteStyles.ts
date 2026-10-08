@@ -52,13 +52,6 @@ export function renderRemoteStyles(entries: RemoteStyleEntry[]): void {
   margin-left: 2px;
   cursor: pointer;
 }
-.vc-remote-inline-${token} {
-  color: ${color};
-  font-style: italic;
-  opacity: 0.75;
-  font-size: 0.85em;
-  white-space: pre;
-}
 .vc-remote-badge-${token} {
   color: ${color};
   border-color: ${color};

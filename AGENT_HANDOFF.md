@@ -170,7 +170,9 @@ flowchart TD
    - **Решение**: один Durable Object `SessionCoordinator` на сессию (`idFromName(sessionId)`), все WS-пиры сессии попадают в один и тот же объект. Используется [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/api/websockets/) (`state.acceptWebSocket` + `state.getWebSockets()`), поэтому простаивающие сокеты не жгут CPU/duration, а метаданные пира переживают hibernation через `ws.serializeAttachment()`.
    - Состояние комнаты (`repoUrl`, `locks`) персистится в storage ДО, локи автоматически снимаются при дисконнекте пира.
    - REST `/api/session/<id>` проксируется в ДО (`/info`), поэтому здоровье сессии теперь глобально консистентно.
-3. **Функционал воркера**:
+4. **Monaco теперь в бандле, а не в CDN**: `src/main.tsx` передаёт `loader.config({ monaco })` из локально установленного `monaco-editor` (0.57.0) и подключает `editor.worker` через Vite-воркер. Раньше `@monaco-editor/react` тянул редактор с `cdn.jsdelivr.net` в рантайме — без интернета редактор просто не открывался (проверено: 0 запросов к CDN и смонтированный `.monaco-editor` после фикса).
+5. **Бейдж live-правки рендерится view-зоной**: Monaco рисует инлайн-декорации `after` только для первой видимой строки (проверено на строках 1/4/20 — бейдж появлялся лишь на первой), поэтому имя тиммейта выводится `editor.createViewZone`, а подсветка строки/gutter-маркера остаются на декорациях (работают на любой строке) плюс `hoverMessage`.
+6. **Функционал воркера**:
    - `GET /health` — проверка статуса сервиса, версии и количества активных сессий.
    - `WS /ws?session=<sessionId>&name=<peerName>&peer=<peerId>&repo=<repoUrl>`:
      - При подключении отправляет `session:init` с текущим состоянием сессии, ссылкой на репозиторий и списком активных блокировок.
@@ -361,6 +363,12 @@ curl -s --resolve brain.vendra.uz:443:188.114.96.0 https://brain.vendra.uz/healt
 | [`src/utils/remoteStyles.ts`](file:///home/ibrohim/VendraCode/src/utils/remoteStyles.ts) | Генерация per-agent CSS-классов для декораций (безопасная санация цвета). |
 | [`src/components/LivePeersBadge.tsx`](file:///home/ibrohim/VendraCode/src/components/LivePeersBadge.tsx) | Бейдж присутствия в панели табов: `Brain: live · N online`. |
 | [`cloudflare/worker.js`](file:///home/ibrohim/VendraCode/cloudflare/worker.js) | Новый тип сообщения `diff:broadcast` → ретрансляция `diff:stream` всем пирам сессии (payload = change-массив Monaco, обрезан до 64 элементов), а также `presence:set` → `peers:list`. |
+
+**Кросс-машинная адресация файлов:** диффы рассылаются с путём **относительно корня workspace** (`src/utils/workspacePath.ts`), а не абсолютным. Без этого тиммейт с другим локальным путём (`/Users/friend/VendraCode` vs `/home/ibrohim/VendraCode`) никогда бы не увидел чужие правки — `filePath` не совпал бы ни для одного файла.
+
+**Имя пира:** отображается имя ОС (`os.userInfo`), либо переопределённое через `localStorage['vendracode-peer-name']` (используется и для тестирования двух инстансов на одной машине). Сессия (`localStorage['vendracode-session']`) теперь восстанавливается синхронно при старте, без лишнего переподключения.
+
+**Мультиплеер верифицирован двумя реальными инстансами** (`/tmp/opencode/multiplayer-verify.mjs`): два IDE с разными user-data-dir, разными именами (Ibrohim / Friend) и **разными корнями workspace**, оба открыли `README.md`. Результат: `Brain: live · 1` в обеих статус-строках, печать в одном инстансе подсвечивает строку, ставит gutter-маркер и показывает бейдж `⌁ Friend · live edit` в другом, а статус-бар считает `1 live edit`. Свои же правки не декорируются.
 
 **Протокол WS (обновлён):**
 ```text

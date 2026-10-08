@@ -3,6 +3,7 @@ import Editor, { OnMount } from '@monaco-editor/react';
 import { useAppStore } from '@/stores/appStore';
 import { brainClient } from '@/services/brainClient';
 import { remoteClassToken, renderRemoteStyles } from '@/utils/remoteStyles';
+import { toWorkspaceRelative } from '@/utils/workspacePath';
 import { X, Circle, FolderOpen, Compass, Sparkles, Play, Users, GitCommit, Shield } from 'lucide-react';import { motion, AnimatePresence } from 'framer-motion';
 import { LiveAgentStream } from './LiveAgentStream';
 import { VendraLogo } from './VendraLogo';
@@ -20,7 +21,11 @@ export function CodeEditor() {
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
   const decorationsRef = useRef<any>(null);
+  /** View-zone ids currently rendered for remote-edit badges. */
+  const zonesRef = useRef<string[]>([]);
   const lastBroadcastRef = useRef(0);
+  const workspacePathRef = useRef(workspacePath);
+  const heldLockPathRef = useRef<string | null>(null);
   /** Counts programmatic content applications that must not be echoed to peers. */
   const suppressBroadcastRef = useRef(0);
   /** Latest active tab, readable from the (memoized) Monaco mount callback. */
@@ -29,13 +34,12 @@ export function CodeEditor() {
 
   const activeTab = openTabs.find((t) => t.id === activeTabId);
   activeTabRef.current = activeTab;
+  workspacePathRef.current = workspacePath;
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
     decorationsRef.current = editor.createDecorationsCollection([]);
-    // Path owned by this editor instance (used for lock cleanup on dispose).
-    const mountedPath = activeTabRef.current?.path as string | undefined;
 
     // Ctrl+S to save
     editor.addCommand(
@@ -83,20 +87,32 @@ export function CodeEditor() {
         rangeLength: change.rangeLength,
       }));
 
-      brainClient.sendDiff(tab.path, changes);
+      // Workspace-relative so teammates with different local roots match the file.
+      brainClient.sendDiff(toWorkspaceRelative(tab.path, workspacePathRef.current), changes);
     });
 
     // Advisory file lock: teammates see the file as "in use" while we type.
     const focusDisposable = editor.onDidFocusEditorText(() => {
       const tab = activeTabRef.current;
-      if (tab) brainClient.acquireLock(tab.path);
+      if (tab) {
+        const lockPath = toWorkspaceRelative(tab.path, workspacePathRef.current);
+        heldLockPathRef.current = lockPath;
+        brainClient.acquireLock(lockPath);
+      }
     });
 
     // Release the advisory lock when the widget unmounts (tab close / switch).
     editor.onDidDispose(() => {
       contentDisposable.dispose();
       focusDisposable.dispose();
-      if (mountedPath) brainClient.releaseLock(mountedPath);
+      editor.changeViewZones((changeAccessor: any) => {
+        for (const zoneId of zonesRef.current) changeAccessor.removeZone(zoneId);
+        zonesRef.current = [];
+      });
+      if (heldLockPathRef.current) {
+        brainClient.releaseLock(heldLockPathRef.current);
+        heldLockPathRef.current = null;
+      }
     });
   };
 
@@ -122,10 +138,10 @@ export function CodeEditor() {
   const handleCloseTab = useCallback(
     (id: string) => {
       const tab = openTabs.find((t) => t.id === id);
-      if (tab) brainClient.releaseLock(tab.path);
+      if (tab) brainClient.releaseLock(toWorkspaceRelative(tab.path, workspacePath));
       closeTab(id);
     },
-    [openTabs, closeTab]
+    [openTabs, workspacePath, closeTab]
   );
 
   const handleOpenFolder = async () => {
@@ -152,8 +168,10 @@ export function CodeEditor() {
     const lineCount = model ? model.getLineCount() : 1;
     const myPeerId = brainClient.getIdentity().peerId;
 
+    // Remote edits arrive as workspace-relative paths — compare like for like.
+    const relativePath = toWorkspaceRelative(activeTab.path, workspacePath);
     const edits = Object.values(remoteEdits).filter(
-      (edit) => edit.filePath === activeTab.path && edit.agentId !== myPeerId
+      (edit) => edit.filePath === relativePath && edit.agentId !== myPeerId
     );
 
     decorationsRef.current?.set(
@@ -161,20 +179,47 @@ export function CodeEditor() {
         const first = edit.changes[0];
         const line = Math.min(Math.max(1, first?.range.startLineNumber || 1), lineCount);
         const token = remoteClassToken(edit.agentId);
+        // Cover the whole line: Monaco only renders `after` inline content for a
+        // non-empty range, so a zero-width range would drop the name badge.
+        const maxColumn = model ? Math.max(1, model.getLineMaxColumn(line)) : 1;
         return {
-          range: new monaco.Range(line, 1, line, 1),
+          range: new monaco.Range(line, 1, line, maxColumn),
           options: {
             isWholeLine: true,
             className: `vc-remote-line-${token}`,
             linesDecorationsClassName: `vc-remote-gutter-${token}`,
-            after: {
-              content: `  ⌁ ${edit.agentName} · live edit`,
-              inlineClassName: `vc-remote-inline-${token}`,
-            },
+            hoverMessage: { value: `**${edit.agentName}** is live-editing this file` },
+            overviewRuler: { color: edit.color, position: 1 },
           },
         };
       })
     );
+
+    // The teammate's name is rendered as a view zone: Monaco only draws inline
+    // `after` decorations on the first visible line, but zones work anywhere.
+    editor.changeViewZones((changeAccessor: any) => {
+      for (const zoneId of zonesRef.current) changeAccessor.removeZone(zoneId);
+      zonesRef.current = [];
+
+      for (const edit of edits) {
+        const line = Math.min(
+          Math.max(1, edit.changes[0]?.range.startLineNumber || 1),
+          lineCount
+        );
+        const token = remoteClassToken(edit.agentId);
+        const node = document.createElement('div');
+        node.className = `vc-remote-badge vc-remote-badge-${token}`;
+        node.textContent = `\u2301 ${edit.agentName} \u00b7 live edit`;
+        zonesRef.current.push(
+          changeAccessor.addZone({
+            afterLineNumber: Math.max(0, line - 1),
+            heightInPx: 16,
+            domNode: node,
+            suppressMouseDown: true,
+          })
+        );
+      }
+    });
 
     renderRemoteStyles(edits.map((edit) => ({ agentId: edit.agentId, color: edit.color })));
   }, [remoteEdits, activeTab]);
