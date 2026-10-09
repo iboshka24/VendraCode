@@ -1,7 +1,7 @@
 {
   "name": "vendracode",
   "version": "1.1.0",
-  "description": "VendraCode \u2014 Multiplayer AI-native IDE. Your agents, working as one.",
+  "description": "VendraCode — Multiplayer AI-native IDE. Your agents, working as one.",
   "homepage": "https://github.com/ibrohim/VendraCode",
   "author": "VendraCode Team <team@vendracode.dev>",
   "license": "MIT",
@@ -52,7 +52,8 @@
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",
     "vite": "^5.1.0",
-    "wait-on": "^7.2.0"
+    "wait-on": "^7.2.0",
+    "ws": "^8.22.0"
   },
   "build": {
     "appId": "com.vendracode.ide",
