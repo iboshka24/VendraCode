@@ -530,6 +530,51 @@ curl -s --resolve brain.vendra.uz:443:188.114.96.0 https://brain.vendra.uz/healt
 
 ---
 
+### 5.6. Бесплатные модели OpenCode Zen + три реальных бага, найденных проверкой (v1.1.1) ✅
+
+Пользователь показал скриншот пикера OpenCode: бесплатные модели существуют, но
+VendraCode их не видел. Причина: сканер читал только `opencode.json` и каталог
+OpenRouter, а `opencode models` (встроенный реестр CLI) не опрашивался.
+
+**Что сделано:**
+
+| Изменение | Файл |
+|---|---|
+| Сканер запускает `opencode models` и отдаёт все 557 записей (`opencode/*`, `nvidia/*`, `tokenharbor/*`, …) с флагом `cliModel: true` | `electron/main.js` |
+| `opencodeModelOverride()` пропускает `cliModel`-модели как есть → `opencode run --model opencode/nemotron-3.5-lightning-free` | `src/utils/opencodeStream.ts` |
+| Пикер помечает такие строки `· via CLI`, при выборе переключает агента на OpenCode CLI и пишет системную заметку | `src/components/AIChat.tsx` |
+| `ProviderConfig.cliModel` + тип результата сканера | `src/types/index.ts` |
+| Системные сообщения чата вообще не рендерились — добавлен тихий центрированный стиль | `src/components/AIChat.tsx` |
+
+**Три настоящих бага, из-за которых агенты «висели на (starting…)»:**
+
+1. **stdin у CLI.** `spawn('opencode', …)` с pipe-stdin: OpenCode читает stdin
+   (поддержка `echo "…" | opencode run`), открытый пайп без EOF блокировал CLI
+   навсегда. Фикс: `stdio: ['ignore', 'pipe', 'pipe']`.
+2. **`activeChatId: null` после перезапуска.** Чаты грузятся из localStorage, но
+   активный id оставался `null`; UI показывал `chatSessions[0]`, а
+   `setActiveChatMessages` молча выходил (`if (!s.activeChatId) return {}`), т.е.
+   ни сообщения, ни стрим, ни вердикт никуда не записывались. Фикс: старт с
+   `INITIAL_CHATS[0].id` + fallback на отображаемый чат в экшене.
+3. **Буфер стрима читался после `cleanupCliRun()`**, который его обнулял — вывод
+   CLI всегда терялся в финальной записи. Фикс: читать `body` до очистки.
+
+**Новый автотест:** `tests/zen-e2e.mjs` (8 проверок, `npm run test:zen`) —
+самодостаточный: поднимает свой Electron, засеивает persisted-чат, сканирует
+модели, выбирает бесплатную Zen-модель, отправляет запрос и ждёт реальный ответ
+в пузыре ассистента (+ проверяет, что записи легли в persisted-чат).
+
+Итог по тестам: **30 + 12 + 8 = 50 проверок, все зелёные.**
+
+Релиз **v1.1.1** → <https://github.com/iboshka24/VendraCode/releases/tag/v1.1.1>
+(все четыре формата: `.exe` NSIS + portable, `.dmg`/`.zip`, `.AppImage`, `.deb`).
+
+> Свободные Zen-модели имеют per-model rate limit: `mimo-v2.6-flash-free` и
+> `exo-free` под нагрузкой отдают `429` / `410 deprecated` — переключайтесь на
+> `nemotron-3.5-lightning-free` или `ling-3.1-flash-free`.
+
+---
+
 ## 6. 💡 BACKLOG ДЛЯ СЛЕДУЮЩЕГО АГЕНТА
 
 1. **Хранилище памяти Brain (RAG / Embeddings)** — подключить Cloudflare Vectorize или Upstash Vector в `worker.js`, чтобы сессии выживали между перезапусками агентов.

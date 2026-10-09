@@ -93,14 +93,26 @@ export function opencodeRunArgs(options: {
   const args = ['run', '--format', 'json'];
   if (options.autoApprove !== false) args.push('--auto');
   if (options.sessionId) args.push('-s', options.sessionId);
-  // Only OpenRouter-hosted providers map cleanly onto opencode's own --model.
+  // The override is already in the CLI's own `provider/model` form (see
+  // opencodeModelOverride), so it can be passed straight through.
   if (options.model) args.push('--model', options.model);
   return args;
 }
 
-/** True when the provider is an OpenRouter endpoint the CLI can address. */
-export function opencodeModelOverride(provider?: { baseUrl?: string; model?: string }): string | undefined {
-  if (!provider?.baseUrl || !provider.model) return undefined;
+/**
+ * Model id to hand to `opencode run --model`, or undefined to use the CLI's
+ * configured default.
+ */
+export function opencodeModelOverride(provider?: { baseUrl?: string; model?: string; cliModel?: boolean }): string | undefined {
+  if (!provider?.model) return undefined;
+
+  // CLI-routed providers (OpenCode Zen free models, and every other provider
+  // OpenCode is logged into): the id is already `provider/model` shaped and the
+  // CLI owns the credentials, so pass it straight through.
+  if (provider.cliModel) return provider.model;
+
+  if (!provider.baseUrl) return undefined;
+  // Only OpenRouter-hosted providers map cleanly onto opencode's own --model.
   if (!/openrouter\.ai/i.test(provider.baseUrl)) return undefined;
   return `openrouter/${provider.model}`;
 }

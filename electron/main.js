@@ -525,6 +525,43 @@ ipcMain.handle('brain:reportAction', async (_event, action) => {
 });
 
 // ─── Local Agent CLI Detection & Execution ─────────────────────────
+
+/**
+ * Locates an agent CLI binary the same way `cli:detectAll` does: PATH first,
+ * then the usual per-user install folders. Shared with the model scanner.
+ */
+function resolveCliBinary(binName) {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const userBins = ['.local/bin', '.opencode/bin', '.npm-global/bin', '.local/share/fnm/aliases/default/bin', '.bun/bin'];
+  const candidates = [
+    ...userBins.map((dir) => path.join(home, dir, binName)),
+    path.join('/usr/local/bin', binName),
+    path.join('/usr/bin', binName),
+    path.join('/bin', binName),
+  ];
+  try {
+    const which = require('child_process').execFileSync('which', [binName], { encoding: 'utf8', timeout: 4000 }).trim();
+    if (which) return which;
+  } catch { /* not on PATH — fall through to the home-relative candidates */ }
+  for (const candidate of candidates) {
+    try { if (fs.existsSync(candidate)) return candidate; } catch { /* unreadable entry */ }
+  }
+  return null;
+}
+
+/** Promise wrapper around the callback-style execFile. */
+function runFile(bin, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, options, (err, stdout, stderr) => {
+      if (err) {
+        err.stderr = stderr;
+        return reject(err);
+      }
+      resolve(stdout);
+    });
+  });
+}
+
 ipcMain.handle('cli:detectAll', async () => {
   // Fallback locations are derived from the current user's home directory so
   // the detector works on any machine (no hardcoded usernames).
@@ -608,6 +645,10 @@ ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cw
         VENDRA_COORDINATION: '1',
         VENDRA_AGENT_ID: agentId,
       },
+      // stdin must be closed, not piped: OpenCode reads stdin so prompts can
+      // be piped into it, and an open pipe that never yields EOF makes the CLI
+      // block forever before printing anything.
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     runningCliProcesses.set(agentId, child);
@@ -839,6 +880,7 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
         }
       }
 
+
       // Live OpenRouter Free Models (:free filter)
       try {
         const controller = new AbortController();
@@ -887,6 +929,44 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
       }
     }
 
+    // 1b. The OpenCode CLI's own model registry (`opencode models`).
+    //
+    // Listed regardless of the active provider, because it answers "what can
+    // this machine actually run?" — and the free Zen models
+    // (opencode/mimo-v2.6-flash-free, opencode/exo-free,
+    // opencode/nemotron-3.5-lightning-free, …) exist nowhere else. Every entry
+    // here is one OpenCode is already logged into; none expose a raw
+    // endpoint+key we could fetch, so they are surfaced as CLI-routable and the
+    // chat answers through `opencode run --model <id>`.
+    try {
+      const bin = resolveCliBinary('opencode');
+      if (bin) {
+        const out = await runFile(bin, ['models'], { timeout: 12000, maxBuffer: 4 * 1024 * 1024 });
+        const seen = new Set();
+        for (const raw of String(out || '').split('\n')) {
+          const id = raw.trim();
+          // Lines look like `opencode/mimo-v2.6-flash-free` or `nvidia/google/gemma-3-4b-it`.
+          if (!id || id.includes(' ') || !id.includes('/')) continue;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const pName = id.slice(0, id.lastIndexOf('/'));
+          models.push({
+            id,
+            name: `${id.slice(id.lastIndexOf('/') + 1)} · ${pName}`,
+            provider: 'opencode',
+            source: `opencode CLI (${pName})`,
+            providerId: `zen-${pName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`,
+            providerName: pName === 'opencode' ? 'OpenCode Zen (Free)' : `OpenCode · ${pName}`,
+            baseUrl: '',
+            apiKey: '',
+            requiresKey: false,
+            cliModel: true,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('opencode models registry fallback:', err.message);
+    }
     // 2. Ollama local models
     if (providerType === 'ollama' || (!providerType && baseUrl && baseUrl.includes('11434'))) {
       const ollamaUrl = (baseUrl || 'http://127.0.0.1:11434').replace(/\/v1\/?$/, '');

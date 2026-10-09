@@ -74,6 +74,12 @@ export interface VendraAPI {
       requiresKey?: boolean;
       /** Human hint for a missing credential, e.g. "set NVIDIA_API_KEY in your shell". */
       keyHint?: string;
+      /**
+       * The model is only callable through an installed agent CLI (OpenCode Zen
+       * and other OpenCode-managed providers): there is no endpoint+key to fetch,
+       * so the chat runs `opencode run --model <id>` instead.
+       */
+      cliModel?: boolean;
     }>>;
   };
   workspace: {
@@ -211,6 +217,13 @@ export interface ProviderConfig {
   model: string;
   isConnected: boolean;
   icon: string;
+  /**
+   * The model is only reachable through an installed agent CLI (OpenCode Zen,
+   * OpenCode-managed NVIDIA / Token Harbor, …): its credentials live inside the
+   * CLI's own login, so there is no raw endpoint+key to call directly. The chat
+   * routes these through `opencode run --model <id>` instead of a fetch().
+   */
+  cliModel?: boolean;
 }
 
 export interface ChatMessage {

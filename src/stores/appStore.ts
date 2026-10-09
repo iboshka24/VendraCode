@@ -208,6 +208,9 @@ interface AppState {
   setWorktrees: (worktrees: GitWorktree[]) => void;
 }
 
+/** Chats read once at boot; the store and the initial active id share them. */
+const INITIAL_CHATS = loadChatSessions();
+
 export const useAppStore = create<AppState>((set, get) => ({
   // View
   activeView: 'editor',
@@ -271,8 +274,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   // AI Chat (persisted sessions; everything is written to localStorage)
-  chatSessions: loadChatSessions(),
-  activeChatId: null,
+  chatSessions: INITIAL_CHATS,
+  // The newest persisted chat is shown by the UI, so it must also be the one
+  // writes land on. Leaving this null made every setActiveChatMessages() call
+  // a silent no-op after a restart (chat looked alive, updates went nowhere).
+  activeChatId: INITIAL_CHATS[0]?.id ?? null,
   createChat: (agentId) => {
     const now = Date.now();
     const chat: ChatSession = {
@@ -306,14 +312,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveChat: (id) => set({ activeChatId: id }),
   setActiveChatMessages: (updater) =>
     set((s) => {
-      if (!s.activeChatId) return {};
+      // Write to the active chat; if that id is missing or stale (e.g. it was
+      // deleted, or the state predates the id being set) fall back to the chat
+      // the UI actually renders — the newest one — instead of silently
+      // dropping the update.
+      const targetId = s.chatSessions.some((c) => c.id === s.activeChatId)
+        ? s.activeChatId
+        : (s.chatSessions[0]?.id ?? null);
+      if (!targetId) return {};
       const sessions = s.chatSessions.map((c) => {
-        if (c.id !== s.activeChatId) return c;
+        if (c.id !== targetId) return c;
         const next = typeof updater === 'function' ? updater(c.messages) : updater;
         return { ...c, messages: next, updatedAt: Date.now() };
       });
       persistChatSessions(sessions);
-      return { chatSessions: sessions };
+      return { chatSessions: sessions, activeChatId: targetId };
     }),
   setChatCliSession: (chatId, sessionId) =>
     set((s) => {

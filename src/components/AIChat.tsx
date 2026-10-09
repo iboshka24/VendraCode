@@ -93,6 +93,8 @@ export const AIChat: React.FC = () => {
     providerName?: string;
     requiresKey?: boolean;
     keyHint?: string;
+    /** Model is only callable through an installed agent CLI (no endpoint+key). */
+    cliModel?: boolean;
   }>>([]);
   const [isScanningModels, setIsScanningModels] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
@@ -320,10 +322,36 @@ export const AIChat: React.FC = () => {
       baseUrl: endpoint,
       apiKey: m.apiKey || '',
       model: m.id,
-      isConnected: Boolean(m.apiKey),
+      // A CLI-routed model is usable without any key of ours — the agent CLI
+      // owns the credentials — so it counts as connected.
+      isConnected: Boolean(m.cliModel) || Boolean(m.apiKey),
       icon: prettyName.slice(0, 1).toUpperCase(),
+      cliModel: Boolean(m.cliModel),
     });
     setIsModelPickerOpen(false);
+
+    // CLI-routed models (OpenCode Zen and the other providers OpenCode is logged
+    // into) expose no endpoint+key we could fetch. Rather than let the built-in
+    // engine walk into an empty request, switch to the OpenCode CLI so the pick
+    // actually answers.
+    if (m.cliModel) {
+      const cliAgent = CHAT_AGENTS.find((a) => a.type === 'cli' && a.bin === 'opencode');
+      const installed = localCLIs.find((c) => c.id === 'opencode')?.isInstalled;
+      if (cliAgent && installed) setSelectedAgent(cliAgent);
+      setMessages((prev) => [...prev, {
+        role: 'system',
+        id: `sys-cli-${Date.now()}`,
+        timestamp: Date.now(),
+        content: [
+          `⚡ **${prettyName} · ${m.id}** selected.`,
+          '',
+          installed
+            ? 'Its credentials live inside the OpenCode CLI, so prompts now run through `opencode run --model ' + m.id + '` in this workspace.'
+            : 'The OpenCode CLI is not installed on this machine, so this model cannot answer yet.',
+        ].join('\n'),
+      }]);
+      return;
+    }
 
     // Tell the user why a model may still fail after importing it.
     if (m.requiresKey && !m.apiKey) {
@@ -619,14 +647,15 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       cliDetachRef.current.push(() => clearInterval(poll));
     });
 
+    // Read the streamed body BEFORE cleanupCliRun() — it clears the buffer,
+    // and reading it afterwards silently discarded everything the CLI said.
+    const body = cliStreamBufferRef.current.trim();
     if (cliFlushTimerRef.current) { clearTimeout(cliFlushTimerRef.current); cliFlushTimerRef.current = null; }
-    flush();
     cleanupCliRun();
     setRunningAgent(null);
     setAgentStatus?.('idle');
 
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-    const body = cliStreamBufferRef.current.trim();
     const verdict = (exitCode === 0)
       ? `✅ exit 0 · ${seconds}s`
       : `❌ exit ${exitCode ?? '?'} · ${seconds}s`;
@@ -930,17 +959,20 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                           ? 'bg-chip text-text-primary font-bold'
                           : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
                       }`}
-                      title={m.apiKey
-                        ? `Import → ${prettyProviderName(m)} (${host || 'active provider'}) · key ready`
-                        : `Import → ${prettyProviderName(m)} · ${m.keyHint || 'API key required for this endpoint'}`}
+                      title={m.cliModel
+                        ? `Use ${m.id} through the OpenCode CLI (credentials stay inside the CLI)`
+                        : m.apiKey
+                          ? `Import → ${prettyProviderName(m)} (${host || 'active provider'}) · key ready`
+                          : `Import → ${prettyProviderName(m)} · ${m.keyHint || 'API key required for this endpoint'}`}
                     >
                       <div className="min-w-0 flex-1 pr-1">
                         <div className="font-mono text-[11px] truncate">{m.name || m.id}</div>
                         <div className="text-[9px] text-text-muted truncate flex items-center gap-1">
                           <span>{m.source}</span>
                           {host && <span className="opacity-70">· {host}</span>}
-                          {m.requiresKey && !m.apiKey && <span className="text-warning">· key needed</span>}
-                          {m.apiKey && <span className="text-ok">· key ready</span>}
+                          {m.cliModel && <span className="text-ok">· via CLI</span>}
+                          {!m.cliModel && m.requiresKey && !m.apiKey && <span className="text-warning">· key needed</span>}
+                          {!m.cliModel && m.apiKey && <span className="text-ok">· key ready</span>}
                         </div>
                       </div>
                       {activeProvider?.model === m.id && <Check size={12} className="text-ok shrink-0" />}
@@ -950,7 +982,9 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
               </div>
               <p className="text-[9px] text-text-muted px-2 py-1.5 border-t border-border mt-1 leading-snug">
                 Picking a model switches the active provider to its own endpoint &amp; key (from
-                opencode.json), so requests go to the right API.
+                opencode.json), so requests go to the right API. Models marked <em>via CLI</em>
+                (OpenCode Zen and friends) have no endpoint — prompts run through
+                `opencode run --model …` instead.
               </p>
             </div>
           )}
@@ -1028,6 +1062,24 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                     <span>{selectedAgent.icon}</span>
                   </div>
                   <div className="bg-surface border border-border text-text-primary px-3 py-2 rounded-xl max-w-[90%] text-xs leading-relaxed whitespace-pre-wrap select-text">
+                    {msg.content}
+                  </div>
+                </motion.div>
+              );
+            }
+
+            // Notes the app itself wants to surface (why a model runs through
+            // an agent CLI, what a picked provider does, …). Rendered as a
+            // quiet centered line so they read as narration, not as chat.
+            if (msg.role === 'system' && msg.content) {
+              return (
+                <motion.div
+                  key={msg.id}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex justify-center"
+                >
+                  <div className="text-[10px] leading-relaxed text-text-muted bg-surface/70 border border-border-light px-2.5 py-1 rounded-lg max-w-[92%] whitespace-pre-wrap text-center select-text">
                     {msg.content}
                   </div>
                 </motion.div>

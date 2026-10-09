@@ -94,7 +94,7 @@ npm run build:all
 
 ### App verification (real UI, real brain)
 
-Two CDP-driven suites boot the packaged app in Electron and click through it:
+Three CDP-driven suites boot the packaged app in Electron and click through it:
 
 ```bash
 npm run test:app           # 30 checks: explorer, editor, search, worktrees,
@@ -102,10 +102,16 @@ npm run test:app           # 30 checks: explorer, editor, search, worktrees,
                            # Settings, hotkeys + a fake-content guard on the DOM
 npm run test:multiplayer   # 12 checks: two real IDE instances with different
                            # workspace roots sharing one brain session
-npm test                   # both
+npm run test:zen           # 8 checks: pick a free OpenCode Zen model from the
+                           # scanner, verify the chat routes through
+                           # `opencode run --model …`, and a real answer lands
+                           # in a persisted chat after an app reload
+npm test                   # all three
 ```
 
-They exercise the built `dist/`, so run `npm run build` first.
+They exercise the built `dist/`, so run `npm run build` first. Each suite boots
+its own Electron instance on its own user-data dir; none of them need a manual
+app start (set `CDP_PORT` to point `test:zen` at a running instance instead).
 
 ### Windows one-command build
 
@@ -145,6 +151,15 @@ Go to **Settings → Providers & Models** to configure your AI providers:
 | Anthropic | `https://api.anthropic.com/v1` | `claude-sonnet-4-20250514` |
 | NVIDIA NIM | `https://integrate.api.nvidia.com/v1` | `meta/llama-3.1-405b-instruct` |
 | Custom | Any OpenAI-compatible URL | Any model name |
+
+### Free models (no API key needed)
+
+If the OpenCode CLI is installed and signed in, **Scan live models** in the chat
+header lists everything it can run — including the free OpenCode Zen models
+(`opencode/nemotron-3.5-lightning-free`, `opencode/ling-3.1-flash-free`, …).
+Those rows are marked **· via CLI**: their credentials live inside the CLI, so
+picking one switches the chat to the OpenCode CLI and prompts run through
+`opencode run --model <id>` in the workspace. No key is pasted into the app.
 
 ### Permissions
 
