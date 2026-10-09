@@ -83,7 +83,7 @@ export function TerminalPanel() {
         };
       } else {
         term.writeln('\x1b[38;2;56;217;169m╭──────────────────────────────────────────────╮\x1b[0m');
-        term.writeln('\x1b[38;2;56;217;169m│  \x1b[1;37mVendraCode Terminal · Amoeba Native Harness\x1b[0m \x1b[38;2;56;217;169m│\x1b[0m');
+        term.writeln('\x1b[38;2;56;217;169m│  \x1b[1;37mVendraCode Terminal · Local PTY\x1b[0m \x1b[38;2;56;217;169m│\x1b[0m');
         term.writeln('\x1b[38;2;56;217;169m│  \x1b[38;2;160;160;160mInteractive PTY session connected to Brain\x1b[0m  \x1b[38;2;56;217;169m│\x1b[0m');
         term.writeln('\x1b[38;2;56;217;169m╰──────────────────────────────────────────────╯\x1b[0m');
         term.writeln('');

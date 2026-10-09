@@ -30,6 +30,19 @@ export const SearchModal: React.FC = () => {
     return () => clearTimeout(timer);
   }, [query, workspacePath]);
 
+  // Escape closes the palette (the input placeholder promises it)
+  useEffect(() => {
+    if (!isSearchOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        toggleSearch();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isSearchOpen, toggleSearch]);
+
   if (!isSearchOpen) return null;
 
   return (

@@ -504,7 +504,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
           `⚠️ **${agent.name} is not installed on this machine.**`,
           '',
           `Looked for \`${agent.bin}\` in PATH and the usual install locations.`,
-          `Install it, then press **Detect agents** again — or switch the agent to **Vendra AI** (built-in engine) in the picker above.`,
+          `Install it, then re-send — or switch the agent to **Vendra AI** (built-in engine) in the picker above.`,
         ].join('\n'),
       }]);
       setAgentStatus?.('idle');
@@ -720,7 +720,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
 
   return (
     <div className="flex flex-col h-full bg-bgside border-l border-border text-text-primary select-none">
-      {/* ─── Amoeba Style Top Header with Chat, Agent & Model Pills ─── */}
+      {/* ─── VendraCode Top Header with chat, agent & model pills ─── */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bgtitle shrink-0 gap-2">
         {/* Chat switcher (persistent conversations) */}
         <div className="relative">
@@ -1178,7 +1178,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
           })}
         </AnimatePresence>
 
-        {/* Amoeba Approval Gate */}
+        {/* Approval gate */}
         {pendingApproval && (
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}

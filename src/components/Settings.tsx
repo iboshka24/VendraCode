@@ -122,7 +122,7 @@ export const Settings: React.FC = () => {
       {/* Content Area */}
       <div className="flex-1 overflow-auto p-6">
         <div className="max-w-4xl mx-auto">
-          {/* ─── Providers Tab (Amoeba Agents & Providers) ─── */}
+          {/* ─── Providers Tab (Agents & Providers) ─── */}
           {settingsTab === 'providers' && (
             <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
               {/* Local Agent CLIs Section */}
@@ -135,20 +135,15 @@ export const Settings: React.FC = () => {
                     </h3>
                   </div>
                   <span className="text-[10px] bg-ok/15 text-ok border border-ok/30 px-2 py-0.5 rounded font-mono font-medium">
-                    Amoeba Shared Brain Active
+                    brain.vendra.uz · WebSocket
                   </span>
                 </div>
                 <p className="text-xs text-text-secondary mb-4 leading-relaxed">
-                  VendraCode detects local AI coding CLIs on this machine (agy, cline, opencode, claude code) and attaches them to the shared coordination Brain with zero merge conflicts.
+                  VendraCode detects local AI coding CLIs on this machine (agy, cline, opencode, claude code). Anything you run there joins the same brain session, so teammates see its file locks and edits live.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {(localCLIs.length > 0 ? localCLIs : [
-                    { id: 'agy', name: 'Antigravity CLI (agy)', bin: 'agy', isInstalled: true, path: '/home/ibrohim/.local/bin/agy' },
-                    { id: 'cline', name: 'Cline CLI', bin: 'cline', isInstalled: true, path: '/usr/bin/cline' },
-                    { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', isInstalled: true, path: '/home/ibrohim/.opencode/bin/opencode' },
-                    { id: 'claude', name: 'Claude Code CLI', bin: 'claude', isInstalled: true, path: '/usr/bin/claude' },
-                  ]).map(cli => (
+                  {localCLIs.map(cli => (
                     <div key={cli.id} className="p-3 bg-bgdeep border border-border rounded-lg flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
                         <div className="w-7 h-7 rounded bg-chip border border-border flex items-center justify-center font-mono text-[11px] font-bold text-text-primary">
@@ -179,6 +174,12 @@ export const Settings: React.FC = () => {
                       </div>
                     </div>
                   ))}
+                  {localCLIs.length === 0 && (
+                    <p className="text-xs text-text-muted col-span-full py-6 text-center border border-dashed border-border rounded-lg">
+                      No agent CLI detected on this machine yet. Install one (opencode, claude, cline, agy)
+                      and it shows up here automatically.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -385,16 +386,16 @@ export const Settings: React.FC = () => {
               <div className="p-4 bg-bgside rounded-xl border border-border flex items-center justify-between">
                 <div>
                   <div className="text-xs font-semibold text-text-primary">Theme</div>
-                  <div className="text-[11px] text-text-muted">Amoeba True Dark</div>
+                  <div className="text-[11px] text-text-muted">Built-in dark theme</div>
                 </div>
                 <span className="amoeba-chip text-xs font-mono font-medium">Dark (Native)</span>
               </div>
               <div className="p-4 bg-bgside rounded-xl border border-border flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-semibold text-text-primary">Automatic Git Snapshots</div>
-                  <div className="text-[11px] text-text-muted">Captures repository worktrees every 5 seconds</div>
+                  <div className="text-xs font-semibold text-text-primary">Chat history</div>
+                  <div className="text-[11px] text-text-muted">Kept in this browser profile across restarts</div>
                 </div>
-                <span className="text-xs text-ok font-mono font-semibold">Enabled</span>
+                <span className="text-xs text-ok font-mono font-semibold">Persisted</span>
               </div>
             </motion.div>
           )}

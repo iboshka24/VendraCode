@@ -18,7 +18,10 @@
     "build:win:full": "vite build && electron-builder --win --publish never",
     "build:win:installer": "vite build && electron-builder --win nsis --publish never",
     "build:win:portable": "vite build && electron-builder --win portable --publish never",
-    "build:win:fast": "vite build && electron-builder --win --dir --publish never"
+    "build:win:fast": "vite build && electron-builder --win --dir --publish never",
+    "test:app": "node tests/full-app-verify.mjs",
+    "test:multiplayer": "node tests/multiplayer-verify.mjs",
+    "test": "npm run test:app && npm run test:multiplayer"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",

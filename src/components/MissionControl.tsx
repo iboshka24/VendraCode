@@ -39,6 +39,23 @@ export const MissionControl: React.FC = () => {
     }
   })();
 
+  /** Real advisory locks, most recent first. */
+  const lockList = useMemo(
+    () =>
+      Object.entries(activeLocks)
+        .map(([filePath, lock]) => ({ filePath, ...lock }))
+        .sort((a, b) => b.timestamp - a.timestamp),
+    [activeLocks],
+  );
+
+  const timeAgo = (ts: number): string => {
+    const secs = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (secs < 60) return `${secs}s ago`;
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return `${mins}m ago`;
+    return `${Math.round(mins / 60)}h ago`;
+  };
+
   /**
    * Lanes are derived from what is actually running/connected:
    *   • every detected local CLI (installed or not)
@@ -105,6 +122,14 @@ export const MissionControl: React.FC = () => {
 
     return result;
   }, [localCLIs, brainPeers, brainStatus, brainSessionId, brainRepoUrl, activeLocks, worktrees, workspacePath, myName]);
+
+  /**
+   * What the lane grid shows: the derived real lanes (you, your brain peers and
+   * the detected CLIs) plus any lanes the user created. Derived lanes are
+   * read-only facts about the machine/session, so they carry no pause control.
+   */
+  const derivedLaneIds = useMemo(() => new Set(lanes.map((l) => l.id)), [lanes]);
+  const shownLanes = useMemo(() => [...lanes, ...agentLanes], [lanes, agentLanes]);
 
   /** Advisory locks that two different agents currently hold. */
   const fileOverlaps = useMemo(() => {
@@ -193,34 +218,36 @@ export const MissionControl: React.FC = () => {
 
   return (
     <div className="flex-1 overflow-y-auto bg-background p-6 text-text-primary h-full select-none">
-      {/* ─── Amoeba Header & Git Snapshots Bar ─────────────────────── */}
+      {/* ─── Header & session state bar ──────────────────────────────── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between pb-5 mb-6 border-b border-border gap-4">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold tracking-tight text-text-primary flex items-center gap-2">
-              <span className="text-accent">amoeba</span>
+              <span className="text-accent">mission</span>
               <span className="text-text-muted">/</span>
-              <span>native harness</span>
+              <span>control</span>
             </h1>
             <span className="amoeba-chip text-text-secondary font-mono text-[11px]">
               {repoName}
             </span>
           </div>
           <p className="text-xs text-text-secondary mt-1">
-            One layer to coordinate any agent, any model. 40% cheaper. Real-time sync.
+            Every agent, every model and every teammate in one room — fed by the same live brain.
           </p>
         </div>
 
-        {/* Live Git Snapshots Indicator */}
+        {/* Real session state (peer count + locks, straight from the brain) */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-bgside border border-border text-xs">
-            <span className="dotpulse" />
+            <span className={brainStatus === 'online' ? 'dotpulse' : 'w-1.5 h-1.5 rounded-full bg-text-muted'} />
             <div className="flex flex-col">
               <span className="font-semibold text-text-primary text-[11px] leading-tight flex items-center gap-1">
-                GIT SNAPSHOTS <span className="text-text-muted font-normal">Every 5s</span>
+                SESSION <span className="text-text-muted font-normal">{brainSessionId}</span>
               </span>
-              <span className="text-[10px] text-ok flex items-center gap-1">
-                ✓ Team up to date · Zero conflicts
+              <span className={`text-[10px] flex items-center gap-1 ${brainStatus === 'online' ? 'text-ok' : 'text-text-muted'}`}>
+                {brainStatus === 'online'
+                  ? `✓ ${brainPeers.length + 1} online · ${Object.keys(activeLocks).length} lock${Object.keys(activeLocks).length === 1 ? '' : 's'}`
+                  : `Brain ${brainStatus}`}
               </span>
             </div>
           </div>
@@ -250,7 +277,7 @@ export const MissionControl: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-text-secondary mt-1 mb-2">
-              Amoeba compares branches, file paths, planned work and task descriptions, and warns about possible overlap before a prompt runs.
+              Two agents in this session hold the same file at once. Worktrees keep the branches separate, but this file will conflict if both write it.
             </p>
             <div className="space-y-1">
               {fileOverlaps.map(([file, agents]) => (
@@ -268,10 +295,14 @@ export const MissionControl: React.FC = () => {
         <div className="mb-6 px-4 py-2.5 bg-bgside border border-border rounded-xl flex items-center justify-between text-xs text-text-secondary">
           <div className="flex items-center gap-2">
             <CheckCheck size={16} className="text-ok" />
-            <span>Advisory file locks active — zero collisions across all agent worktrees.</span>
+            <span>
+              {lockList.length === 0
+                ? 'No file locks held — no teammate is editing a file you have open.'
+                : `${lockList.length} file lock${lockList.length === 1 ? '' : 's'} held across the session — locked files stay read-only for you.`}
+            </span>
           </div>
           <span className="font-mono text-[10px] text-text-muted">
-            Brain status: SYNCED
+            Brain: {brainStatus === 'online' ? 'live' : brainStatus}
           </span>
         </div>
       )}
@@ -364,13 +395,13 @@ export const MissionControl: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* ─── Amoeba Lanes Grid ──────────────────────────────────────── */}
+      {/* ─── Lanes grid (real CLIs, peers, user lanes) ── */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-bold tracking-wide uppercase text-text-secondary flex items-center gap-2">
             <span>Lanes in Mission Control</span>
             <span className="text-[10px] text-text-muted font-normal lowercase font-mono">
-              ({agentLanes.length} active)
+              ({shownLanes.length} active)
             </span>
           </h2>
           <span className="text-xs text-text-muted">
@@ -380,7 +411,7 @@ export const MissionControl: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
           <AnimatePresence>
-            {agentLanes.map(agent => (
+            {shownLanes.map(agent => (
               <motion.div
                 key={agent.id}
                 layout
@@ -452,7 +483,7 @@ export const MissionControl: React.FC = () => {
                     </span>
 
                     <div className="flex gap-1">
-                      {agent.status === 'running' ? (
+                      {!derivedLaneIds.has(agent.id) && (agent.status === 'running' ? (
                         <button 
                           type="button"
                           onClick={() => updateAgentLane(agent.id, { status: 'idle' })}
@@ -470,7 +501,7 @@ export const MissionControl: React.FC = () => {
                         >
                           <Play size={12} />
                         </button>
-                      )}
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -480,7 +511,7 @@ export const MissionControl: React.FC = () => {
         </div>
       </div>
 
-      {/* ─── Amoeba Approval Gates ─────────────────────────────────── */}
+      {/* ─── Approval gates ─────────────────────────────────── */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-bold tracking-wide uppercase text-text-secondary flex items-center gap-2">
@@ -557,48 +588,40 @@ export const MissionControl: React.FC = () => {
         </div>
       </div>
 
-      {/* ─── The Shared Brain: Pinned Files & Live Stream ────────────── */}
+      {/* ─── The Shared Brain: Live Locks & Live Stream ─────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        {/* Brain Memories */}
+        {/* Live file locks — real advisory locks held by teammates/agents */}
         <div className="p-4 bg-bgside border border-border rounded-xl">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-xs font-bold tracking-wide uppercase text-text-secondary flex items-center gap-2">
               <Zap size={14} className="text-accent" />
-              <span>The Shared Brain · Pinned Memories</span>
+              <span>Live File Locks</span>
             </h3>
-            <span className="text-[10px] text-text-muted font-mono">3 pinned</span>
+            <span className="text-[10px] text-text-muted font-mono">
+              {lockList.length} held
+            </span>
           </div>
 
           <div className="space-y-2">
-            <div className="p-2.5 bg-bgdeep rounded-lg border border-border text-xs">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-mono text-accent text-[11px]">src/lobby/join.ts · 8a13c2e</span>
-                <span className="text-[10px] text-text-hint">Alice · 2m ago</span>
+            {lockList.length === 0 ? (
+              <div className="text-xs text-text-muted text-center py-8">
+                No teammate or agent holds a file lock right now.
               </div>
-              <p className="text-text-secondary text-[11px]">
-                the seating path is pickOpenSlot, reserveSlot, retryJoin
-              </p>
-            </div>
-
-            <div className="p-2.5 bg-bgdeep rounded-lg border border-border text-xs">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-mono text-accent text-[11px]">src/cart/totals.ts · 4f19b7d</span>
-                <span className="text-[10px] text-text-hint">Chen · 8m ago</span>
-              </div>
-              <p className="text-text-secondary text-[11px]">
-                cart totals recompute on promo change, do not cache
-              </p>
-            </div>
-
-            <div className="p-2.5 bg-bgdeep rounded-lg border border-border text-xs">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-mono text-accent text-[11px]">src/net/session_store.ts · 8a13c2e</span>
-                <span className="text-[10px] text-text-hint">Alice · 1h ago</span>
-              </div>
-              <p className="text-text-secondary text-[11px]">
-                reserveSlot() writes without comparing, that is the bug
-              </p>
-            </div>
+            ) : (
+              lockList.map((lock) => (
+                <div key={lock.filePath} className="p-2.5 bg-bgdeep rounded-lg border border-border text-xs">
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <span className="font-mono text-accent text-[11px] truncate">{lock.filePath}</span>
+                    <span className="text-[10px] text-text-hint shrink-0">
+                      {timeAgo(lock.timestamp)}
+                    </span>
+                  </div>
+                  <p className="text-text-secondary text-[11px]">
+                    {lock.agentName} is editing this file — you are read-only until it unlocks.
+                  </p>
+                </div>
+              ))
+            )}
           </div>
         </div>
 

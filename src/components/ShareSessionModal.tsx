@@ -10,11 +10,11 @@ export const ShareSessionModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
-  const { workspacePath, setWorkspacePath, setFileTree, setBrainSessionId, setBrainRepoUrl, worktrees } = useAppStore();
+  const { workspacePath, setWorkspacePath, setFileTree, setBrainSessionId, setBrainRepoUrl, worktrees, brainSessionId } = useAppStore();
   const [activeTab, setActiveTab] = useState<'share' | 'join'>('share');
   const [copied, setCopied] = useState(false);
   const [githubRepoUrl, setGithubRepoUrl] = useState('https://github.com/ibrohim/VendraCode');
-  const [sessionId, setSessionId] = useState('lobby-join-race');
+  const [sessionId, setSessionId] = useState(brainSessionId);
   const [joinUrlInput, setJoinUrlInput] = useState('');
   const [isCloning, setIsCloning] = useState(false);
   const [cloneStatus, setCloneStatus] = useState<string | null>(null);
@@ -132,7 +132,7 @@ export const ShareSessionModal: React.FC<{
               <Users size={16} />
             </div>
             <div>
-              <h3 className="font-bold text-sm text-text-primary">Amoeba Multiplayer Swarm</h3>
+              <h3 className="font-bold text-sm text-text-primary">Share this session</h3>
               <p className="text-[11px] text-text-muted">Cloudflare Edge Subdomain · brain.vendra.uz</p>
             </div>
           </div>
@@ -172,7 +172,7 @@ export const ShareSessionModal: React.FC<{
         {activeTab === 'share' ? (
           <div className="space-y-4">
             <p className="text-xs text-text-secondary leading-relaxed">
-              Share this session with teammates. All friends link to the <strong>same GitHub repository</strong>, and their local agents (OpenCode, Claude Code, Codex) run in parallel in separate Git worktrees with 5-second live sync.
+              Share this session with teammates. Everyone links to the <strong>same GitHub repository</strong>, and their local agents (OpenCode, Claude Code, Codex) run in parallel in separate Git worktrees while edits stream live over the brain.
             </p>
 
             {/* Linked Central GitHub Repo */}
@@ -203,7 +203,7 @@ export const ShareSessionModal: React.FC<{
                   Cloudflare Live Session URL
                 </label>
                 <span className="text-[9.5px] text-ok bg-ok/10 border border-ok/30 px-1.5 py-0.2 rounded font-mono">
-                  Cloudflare Edge Proxied
+                  Cloudflare Durable Object
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -260,7 +260,7 @@ export const ShareSessionModal: React.FC<{
                 type="text"
                 value={joinUrlInput}
                 onChange={(e) => setJoinUrlInput(e.target.value)}
-                placeholder="https://brain.vendra.uz/session/lobby-join-race?repo=https://github.com/..."
+                placeholder="https://brain.vendra.uz/session/<session-id>?repo=https://github.com/..."
                 className="vc-input text-xs font-mono py-1.5 h-9 w-full mb-3"
               />
 

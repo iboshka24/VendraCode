@@ -469,6 +469,65 @@ curl -s --resolve brain.vendra.uz:443:188.114.96.0 https://brain.vendra.uz/healt
 - Окружение: `CSC_IDENTITY_AUTO_DISCOVERY: false` (сборка без подписи на CI) и `GH_TOKEN`.
 - Иконки сгенерированы под все платформы: `build/icon.ico` (6 размеров 16–256), `build/icon.icns` (icp4/icp5/icp6/ic07–ic10).
 
+### 5.4. Вторая зачистка фейка + автотесты всего приложения ✅
+
+Первая зачистка убрала `LiveAgentStream` и сиды стора, но при аудите DOM нашлись
+**остатки демо, которые были видны пользователю**. Убрано во втором проходе:
+
+| Где | Было (фейк) | Стало (реальность) |
+|---|---|---|
+| `TitleBar` | hardcoded-аватары `Alice (Claude Code) · Online`, `Chen (Codex)`, `Bob (Claude Code)` | стек аватаров из `brainPeers` (детерминированный цвет по имени) |
+| `MissionControl` | `GIT SNAPSHOTS Every 5s`, `✓ Team up to date · Zero conflicts` | `SESSION <id>` + `{n} online · {n} locks` из стора |
+| `MissionControl` | `Brain status: SYNCED` (хардкод) | `Brain: live/online/offline` из реального `brainStatus` |
+| `MissionControl` | панель «Pinned Memories» с 3 выдуманными записями (`src/lobby/join.ts · Alice · 2m ago`) | панель **Live File Locks** — реальные `activeLocks` (кто на каком файле) |
+| `MissionControl` | грид лейнов пуст без ручного «New Lane», а вычисленные реальные лейны были мёртвым кодом | рендерятся `derived lanes` (ты + пировы + найденные CLI) **плюс** пользовательские; read-only лейны без кнопки Pause |
+| `MissionControl` | заголовок `amoeba / native harness`, «40% cheaper», «Amoeba compares branches… warnings before a prompt runs» | `mission / control`, честное описание; баннер перекрытий говорит ровно то, что считается (`fileOverlaps`) |
+| `Settings` | fallback-массив CLI с выдуманными путями (`/usr/bin/cline`, `isInstalled: true`) | только реальные `localCLIs` + честный пустой стейт |
+| `Settings` | карточка «Automatic Git Snapshots … every 5 seconds · Enabled» (функции нет) | карточка «Chat history · Persisted» (это действительно есть) |
+| `ShareSessionModal` | дефолт `lobby-join-race`, «5-second live sync», «Cloudflare Edge Proxied» | реальный `brainSessionId` из стора, «edits stream live over the brain», «Cloudflare Durable Object» |
+| `CodeEditor` / `TitleBar` / `SearchModal` | подсказки `Ctrl+O`, `Ctrl+Shift+F`, `Ctrl+Shift+P`, `Esc to close` **без обработчиков** | все четыре **реально реализованы** в `App.tsx` и `SearchModal.tsx` |
+| `AIChat` | сообщение об ошибке со ссылкой на несуществующую кнопку «Detect agents» | формулировка без выдуманной кнопки |
+| Брендинг | остатки «Amoeba» в заголовках/баннерах/теме | «VendraCode» / «mission / control» |
+
+**Глобальные шорткаты (реализованы, а не просто подписаны):**
+
+- `Ctrl+Shift+F` и `Ctrl+Shift+P` → палитра поиска (`SearchModal`, quick actions)
+- `Ctrl+O` → системный диалог выбора папки + загрузка дерева файлов
+- `Esc` → закрытие палитры (обработчик в `SearchModal`)
+
+**Автотесты приложения (запускаются против собранного `dist/` через CDP):**
+
+| Команда | Что проверяет | Результат |
+|---|---|---|
+| `npm run test:app` | [`tests/full-app-verify.mjs`](file:///home/ibrohim/VendraCode/tests/full-app-verify.mjs) — загрузка без ошибок рендерера, дерево файлов, открытие файла в Monaco, палитра поиска + Esc, PTY-терминал, worktree-переключатель, скан моделей, мультичат + персистентность, Mission Control (реальные лейны, панель локов), Settings (каждый путь CLI — реальный бинарник), аватары титульника, хоткеи, **анти-фейк-гард по DOM** | **30/30** |
+| `npm run test:multiplayer` | [`tests/multiplayer-verify.mjs`](file:///home/ibrohim/VendraCode/tests/multiplayer-verify.mjs) — два реальных инстанса с разными корнями workspace на боевом мозге: взаимная видимость, ретрансляция live-диффа через разные локальные пути, бейджи и счётчики | **12/12** |
+| `npm test` | оба сюита подряд | — |
+
+> Тесты чинят типичные ловушки CDP, чтобы будущий агент не потратил на них час:
+> модификаторы — битовая маска (`Ctrl=2`, `Shift=8`, а не 8/1); `innerText`
+> возвращает текст **после** `text-transform: uppercase`, поэтому заголовки ищутся
+> case-insensitive; первый `<textarea>` в DOM — скрытый `xterm-helper-textarea`
+> терминала, чат-инпут надо брать по placeholder.
+
+### 5.5. Релиз v1.1.0 (все платформы) ✅
+
+Тег `v1.1.0` → CI собрал и опубликовал релиз **<https://github.com/iboshka24/VendraCode/releases/tag/v1.1.0>**:
+
+| Артефакт | Размер |
+|---|---|
+| `VendraCode.Setup.1.1.0.exe` (NSIS) | 96.1 MB |
+| `VendraCode.1.1.0.exe` (portable) | 95.9 MB |
+| `VendraCode-1.1.0-arm64.dmg` | 116.9 MB |
+| `VendraCode-1.1.0-arm64-mac.zip` | 112.6 MB |
+| `VendraCode-1.1.0.AppImage` | 127.4 MB |
+| `vendracode_1.1.0_amd64.deb` | 81.1 MB |
+
+> **Важный фикс CI:** `electron-builder` на теге сам пытается создать GitHub-релиз и
+> получает `403 Resource not accessible by integration`, потому что build-job имеет
+> только `contents: read`. Поэтому во все платформенные скрипты добавлен
+> `--publish never` — публикация целиком лежит на job `release`
+> (`softprops/action-gh-release`). Без этого флага любой тег роняет все три сборки.
+
 ---
 
 ## 6. 💡 BACKLOG ДЛЯ СЛЕДУЮЩЕГО АГЕНТА

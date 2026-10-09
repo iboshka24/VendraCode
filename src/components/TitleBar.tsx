@@ -8,10 +8,28 @@ import {
 import { motion } from 'framer-motion';
 import { VendraLogo } from './VendraLogo';
 
-export function TitleBar() {
-  const { activeView, setActiveView, toggleChat, isChatOpen, toggleTerminal, toggleSearch, toggleShare, workspacePath } = useAppStore();
+// Deterministic accent per teammate so a given peer always looks the same.
+const PEER_COLORS = ['#f06595', '#38d9a9', '#4dabf7', '#7c3aed', '#f59f00', '#e64980', '#12b886'];
 
-  const repoName = workspacePath ? workspacePath.split('/').pop() : 'abyssal-drift';
+function peerColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return PEER_COLORS[h % PEER_COLORS.length];
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/[\s_-]+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+export function TitleBar() {
+  const { activeView, setActiveView, toggleChat, isChatOpen, toggleTerminal, toggleSearch, toggleShare, workspacePath, brainPeers, brainStatus } = useAppStore();
+
+  const repoName = workspacePath ? workspacePath.split('/').pop() : '';
+  const selfName = (typeof localStorage !== 'undefined' && localStorage.getItem('vendracode-peer-name')) || 'You';
+  const isLive = brainStatus === 'online';
 
   return (
     <header 
@@ -20,7 +38,7 @@ export function TitleBar() {
     >
       {/* Left: Brand + Workspace + Nav */}
       <div className="flex items-center gap-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
-        {/* Amoeba Brand Mark */}
+        {/* Brand mark */}
         <div className="flex items-center gap-2 mr-1">
           <VendraLogo size={22} />
           <span className="font-bold text-text-primary tracking-tight text-xs font-mono">
@@ -96,32 +114,25 @@ export function TitleBar() {
 
         <div className="w-px h-4 bg-border mx-0.5" />
 
-        {/* Team Avatar Stack */}
-        <div className="flex -space-x-1.5 items-center">
-          <div 
-            className="w-6 h-6 rounded-full bg-[#f06595] border border-bgtitle flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
-            title="Alice (Claude Code) · Online"
+        {/* Team Avatar Stack — real teammates from the brain session */}
+        <div className="flex -space-x-1.5 items-center" title={isLive ? 'Connected to brain.vendra.uz' : `brain.vendra.uz · ${brainStatus}`}>
+          <div
+            className="w-6 h-6 rounded-full border border-bgtitle flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
+            style={{ background: peerColor(selfName) }}
+            title={`${selfName} · you`}
           >
-            AN
+            {initials(selfName)}
           </div>
-          <div 
-            className="w-6 h-6 rounded-full bg-[#38d9a9] border border-bgtitle flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
-            title="Chen (Codex) · Online"
-          >
-            CI
-          </div>
-          <div 
-            className="w-6 h-6 rounded-full bg-[#4dabf7] border border-bgtitle flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
-            title="Bob (Claude Code) · Online"
-          >
-            BF
-          </div>
-          <div 
-            className="w-6 h-6 rounded-full bg-[#7c3aed] border border-bgtitle flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
-            title="You · Online"
-          >
-            IB
-          </div>
+          {brainPeers.map((peer) => (
+            <div
+              key={peer}
+              className="w-6 h-6 rounded-full border border-bgtitle flex items-center justify-center text-[9px] font-bold text-white shadow-sm"
+              style={{ background: peerColor(peer) }}
+              title={`${peer} · online`}
+            >
+              {initials(peer)}
+            </div>
+          ))}
         </div>
 
         {/* Share Session Pop Button */}

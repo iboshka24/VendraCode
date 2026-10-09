@@ -91,7 +91,7 @@ export const VendraLogo: React.FC<VendraLogoProps> = ({
             </span>
           </div>
           <span className="text-[10px] text-text-muted font-sans leading-none">
-            Amoeba Swarm IDE
+            Multiplayer AI IDE
           </span>
         </div>
       )}

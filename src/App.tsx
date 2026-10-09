@@ -38,6 +38,7 @@ function App() {
     addBrainAction,
     isShareOpen,
     toggleShare,
+    toggleSearch,
     setBrainSessionId,
     setBrainRepoUrl,
   } = useAppStore();
@@ -82,6 +83,40 @@ function App() {
       removeActionListener();
     };
   }, [setLocalCLIs, setActiveLocks, addBrainAction]);
+
+  // Global keyboard shortcuts (the ones the welcome screen and tooltips promise)
+  useEffect(() => {
+    const onKey = async (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+
+      // Ctrl+Shift+F — search codebase
+      // Ctrl+Shift+P — command palette (same modal, quick actions first)
+      if (e.shiftKey && (e.key === 'f' || e.key === 'F' || e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        toggleSearch();
+        return;
+      }
+
+      // Ctrl+O — open a repository folder
+      if (e.key === 'o' || e.key === 'O') {
+        e.preventDefault();
+        try {
+          const path = await window.vendraAPI?.dialog.openDirectory();
+          if (path) {
+            setWorkspacePath(path);
+            const entries = await window.vendraAPI.fs.readDir(path);
+            if (entries?.length) setFileTree(entries);
+          }
+        } catch (err) {
+          console.error('Failed to open directory:', err);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleSearch, setWorkspacePath, setFileTree]);
 
   // Watch workspace when path changes so that ANY external CLI action updates the IDE in real-time
   useEffect(() => {

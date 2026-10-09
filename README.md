@@ -92,6 +92,21 @@ npm run build:mac      # macOS (DMG, zip)
 npm run build:all
 ```
 
+### App verification (real UI, real brain)
+
+Two CDP-driven suites boot the packaged app in Electron and click through it:
+
+```bash
+npm run test:app           # 30 checks: explorer, editor, search, worktrees,
+                           # terminal, model scan, multi-chat, Mission Control,
+                           # Settings, hotkeys + a fake-content guard on the DOM
+npm run test:multiplayer   # 12 checks: two real IDE instances with different
+                           # workspace roots sharing one brain session
+npm test                   # both
+```
+
+They exercise the built `dist/`, so run `npm run build` first.
+
 ### Windows one-command build
 
 Double-click **`build-windows.bat`**, or run:
