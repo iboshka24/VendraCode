@@ -224,6 +224,20 @@ export interface ChatMessage {
   isStreaming?: boolean;
 }
 
+/** A persisted AI chat (survives restarts, one per task/conversation). */
+export interface ChatSession {
+  id: string;
+  /** Short label shown in the chat switcher. */
+  title: string;
+  /** Agent selected when the chat was created. */
+  agentId: string;
+  messages: ChatMessage[];
+  /** OpenCode CLI session id — lets the agent continue with full context. */
+  opencodeSessionId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ToolCall {
   id: string;
   function: {

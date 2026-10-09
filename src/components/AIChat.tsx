@@ -1,14 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
-  Send, Bot, User, Loader2, Wrench, X, Settings, ChevronDown, 
+  Send, Bot, User, Loader2, Wrench, X, Settings, ChevronDown, MessageSquare, Plus, Trash2, 
   Sparkles, Square, Globe, Camera, Cpu, Terminal, ExternalLink,
   Search, CheckCircle2, AlertCircle, FileCode, Check, Layers, Play
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/stores/appStore';
-import type { LocalCLIDetected } from '@/types';
+import type { LocalCLIDetected, ChatSession } from '@/types';
 import { brainClient } from '@/services/brainClient';
 import { toWorkspaceRelative } from '@/utils/workspacePath';
+import { parseCliChunk, opencodeRunArgs, opencodeModelOverride, deriveChatTitle } from '@/utils/opencodeStream';
 import { ChatMessage, ToolCall, ProviderConfig, ApprovalRequest } from '@/types/index';
 import { AGENT_TOOLS } from '@/utils/providers';
 
@@ -54,7 +55,23 @@ export const AIChat: React.FC = () => {
     localCLIs
   } = useAppStore();
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Chats live in the store (persisted to localStorage), so a reload or restart
+  // keeps the conversation and the CLI session context.
+  const chatSessions = useAppStore((s) => s.chatSessions);
+  const activeChatId = useAppStore((s) => s.activeChatId);
+  const createChat = useAppStore((s) => s.createChat);
+  const setActiveChat = useAppStore((s) => s.setActiveChat);
+  const deleteChat = useAppStore((s) => s.deleteChat);
+  const renameChat = useAppStore((s) => s.renameChat);
+  const setActiveChatMessages = useAppStore((s) => s.setActiveChatMessages);
+  const setChatCliSession = useAppStore((s) => s.setChatCliSession);
+
+  const activeChat: ChatSession | undefined =
+    chatSessions.find((c) => c.id === activeChatId) || chatSessions[0];
+  const messages = activeChat?.messages ?? [];
+  const setMessages = setActiveChatMessages;
+
+  const [isChatListOpen, setIsChatListOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [selectedAgent, setSelectedAgent] = useState<ChatAgentOption>(CHAT_AGENTS[0]);
   const [isAgentDropdownOpen, setIsAgentDropdownOpen] = useState(false);
@@ -79,6 +96,11 @@ export const AIChat: React.FC = () => {
   }>>([]);
   const [isScanningModels, setIsScanningModels] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
+
+  // Guarantee there is always one chat to talk in (also seeds the first run).
+  useEffect(() => {
+    if (chatSessions.length === 0) createChat(selectedAgent.id);
+  }, [chatSessions.length, createChat, selectedAgent.id]);
 
   // Live CLI agent run (spawned via the main process, streamed back into chat)
   const [runningAgent, setRunningAgent] = useState<{
@@ -520,9 +542,23 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       cliFlushTimerRef.current = setTimeout(flush, 120);
     };
 
+    const chatId = activeChat?.id;
+
     const detachOutput = api.cli.onAgentOutput((chunk) => {
       if (chunk.agentId !== agentId) return;
-      cliStreamBufferRef.current += chunk.text || '';
+
+      // OpenCode prints NDJSON events: extract readable text and the session id.
+      if (agent.id === 'opencode') {
+        for (const parsed of parseCliChunk(chunk.text || '')) {
+          if (parsed.sessionId && chatId && parsed.sessionId !== activeChat?.opencodeSessionId) {
+            setChatCliSession(chatId, parsed.sessionId);
+          }
+          if (parsed.error) cliStreamBufferRef.current += `\n\n⚠️ ${parsed.error}\n`;
+          if (parsed.text) cliStreamBufferRef.current += parsed.text;
+        }
+      } else {
+        cliStreamBufferRef.current += chunk.text || '';
+      }
       scheduleFlush();
     });
     const detachExit = api.cli.onAgentExit(({ agentId: exitedId, code }) => {
@@ -540,7 +576,10 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
 
     // ── spawn: per-CLI argument shapes (verified against each CLI) ─
     const argsByAgent: Record<string, string[]> = {
-      opencode: ['run', '--auto'],
+      opencode: opencodeRunArgs({
+        sessionId: activeChat?.opencodeSessionId,
+        model: opencodeModelOverride(activeProvider || undefined),
+      }),
       claude: ['-p', '--dangerously-skip-permissions'],
       agy: ['run', '--auto'],
       cline: ['run'],
@@ -616,6 +655,11 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       timestamp: Date.now()
     };
 
+    // A brand-new chat gets its title from the first message.
+    if (activeChat && activeChat.title === 'New chat') {
+      rememberChatTitle(activeChat.id, text);
+    }
+
     let currentMessages = [...messages, userMessage];
     setMessages(currentMessages);
     setInputValue('');
@@ -667,10 +711,80 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     }
   };
 
+  /** Titles a chat from its first user message once, right after it is sent. */
+  const rememberChatTitle = (chatId: string, text: string) => {
+    const chat = chatSessions.find((c) => c.id === chatId);
+    if (!chat || chat.title !== 'New chat') return;
+    renameChat(chatId, deriveChatTitle(text));
+  };
+
   return (
     <div className="flex flex-col h-full bg-bgside border-l border-border text-text-primary select-none">
-      {/* ─── Amoeba Style Top Header with Agent & Model Pills ─── */}
+      {/* ─── Amoeba Style Top Header with Chat, Agent & Model Pills ─── */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bgtitle shrink-0 gap-2">
+        {/* Chat switcher (persistent conversations) */}
+        <div className="relative">
+          <button
+            type="button"
+            className="agentpill font-medium max-w-[190px]"
+            onClick={() => { setIsChatListOpen(!isChatListOpen); setIsAgentDropdownOpen(false); setIsProviderDropdownOpen(false); }}
+            title={activeChat ? `Chat: ${activeChat.title} · ${activeChat.messages.length} message(s)` : 'No chat yet'}
+          >
+            <MessageSquare className="w-3 h-3 text-accent shrink-0" />
+            <span className="font-semibold text-text-primary text-[11px] truncate">{activeChat?.title || 'New chat'}</span>
+            <span className="text-[9px] font-mono text-text-muted shrink-0">{chatSessions.length}</span>
+            <ChevronDown className="w-3 h-3 text-text-muted shrink-0" />
+          </button>
+
+          {isChatListOpen && (
+            <div className="absolute left-0 mt-1.5 w-72 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1.5">
+              <div className="flex items-center justify-between px-2 py-1">
+                <span className="text-[10px] text-text-muted font-semibold uppercase tracking-wider">Chats</span>
+                <button
+                  type="button"
+                  onClick={() => { const id = createChat(selectedAgent.id); rememberChatTitle(id, ''); setIsChatListOpen(false); }}
+                  className="btn btn-ghost h-6 px-2 text-[11px] gap-1"
+                  title="Start a new chat (the agent keeps its own CLI context per chat)"
+                >
+                  <Plus className="w-3 h-3" />
+                  New
+                </button>
+              </div>
+
+              <div className="max-h-64 overflow-y-auto space-y-0.5 mt-1">
+                {chatSessions.length === 0 && (
+                  <div className="px-2 py-3 text-[11px] text-text-muted">No chats yet.</div>
+                )}
+                {chatSessions.map((chat) => (
+                  <div
+                    key={chat.id}
+                    className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                      chat.id === activeChat?.id ? 'bg-chip text-text-primary' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                    }`}
+                    onClick={() => { setActiveChat(chat.id); setIsChatListOpen(false); }}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-medium truncate">{chat.title}</div>
+                      <div className="text-[9px] text-text-muted font-mono truncate">
+                        {chat.messages.length} msg · {new Date(chat.updatedAt).toLocaleString()}
+                        {chat.opencodeSessionId ? ' · ctx' : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}
+                      className="opacity-0 group-hover:opacity-100 text-danger shrink-0"
+                      title="Delete this chat"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Agent Selector Dropdown (Vendra AI, OpenCode, Agy, Cline, Claude) */}
         <div className="relative">
           <button 

@@ -2,13 +2,44 @@ import { create } from 'zustand';
 import type {
   FileEntry, EditorTab, ChatMessage, AgentLane, Session, ApprovalRequest,
   ProviderConfig, AppSettings, GitStatus, AgentStatus, SettingsTab,
-  BrainConnectionStatus, RemoteDiff, GitWorktree,
+  BrainConnectionStatus, RemoteDiff, GitWorktree, ChatSession,
   BrainLock, BrainAction, LocalCLIDetected
 } from '@/types';
 import { DEFAULT_PROVIDERS } from '@/utils/providers';
 import { getLanguageFromPath } from '@/utils/providers';
 
 // ─── App Store ─────────────────────────────────────────────────────
+
+const CHAT_STORAGE_KEY = 'vendracode-chats-v1';
+const CHAT_LIMIT = 60;
+
+/** Loads persisted chats (newest first); the newest is always present. */
+function loadChatSessions(): ChatSession[] {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((c) => c && typeof c.id === 'string' && Array.isArray(c.messages))
+      .slice(0, CHAT_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function persistChatSessions(sessions: ChatSession[]): void {
+  try {
+    // Cap the history so localStorage cannot grow without bound.
+    const trimmed = sessions.slice(0, CHAT_LIMIT).map((c) => ({
+      ...c,
+      messages: c.messages.slice(-200),
+    }));
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(trimmed));
+  } catch {
+    /* storage full / private mode — keep running with in-memory chats */
+  }
+}
 
 /** Session id the user last used, restored synchronously to avoid a
  *  connect → reconnect round trip on boot. */
@@ -77,11 +108,17 @@ interface AppState {
   updateTabContent: (id: string, content: string) => void;
   markTabClean: (id: string) => void;
 
-  // AI Chat
-  chatMessages: ChatMessage[];
-  addChatMessage: (msg: ChatMessage) => void;
-  updateChatMessage: (id: string, updates: Partial<ChatMessage>) => void;
-  clearChat: () => void;
+  // AI Chat (persisted sessions)
+  chatSessions: ChatSession[];
+  activeChatId: string | null;
+  createChat: (agentId?: string) => string;
+  deleteChat: (id: string) => void;
+  renameChat: (id: string, title: string) => void;
+  setActiveChat: (id: string) => void;
+  /** Replaces the message list of the currently active chat. */
+  setActiveChatMessages: (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
+  /** Stores the CLI session id so the next message continues the same context. */
+  setChatCliSession: (chatId: string, sessionId?: string) => void;
   isChatOpen: boolean;
   toggleChat: () => void;
 
@@ -233,14 +270,59 @@ export const useAppStore = create<AppState>((set, get) => ({
       openTabs: s.openTabs.map((t) => (t.id === id ? { ...t, isDirty: false } : t)),
     })),
 
-  // AI Chat
-  chatMessages: [],
-  addChatMessage: (msg) => set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
-  updateChatMessage: (id, updates) =>
-    set((s) => ({
-      chatMessages: s.chatMessages.map((m) => (m.id === id ? { ...m, ...updates } : m)),
-    })),
-  clearChat: () => set({ chatMessages: [] }),
+  // AI Chat (persisted sessions; everything is written to localStorage)
+  chatSessions: loadChatSessions(),
+  activeChatId: null,
+  createChat: (agentId) => {
+    const now = Date.now();
+    const chat: ChatSession = {
+      id: `chat-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      title: 'New chat',
+      agentId: agentId || 'vendra-ai',
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    set((s) => {
+      const sessions = [chat, ...s.chatSessions];
+      persistChatSessions(sessions);
+      return { chatSessions: sessions, activeChatId: chat.id };
+    });
+    return chat.id;
+  },
+  deleteChat: (id) =>
+    set((s) => {
+      const sessions = s.chatSessions.filter((c) => c.id !== id);
+      const activeChatId = s.activeChatId === id ? (sessions[0]?.id ?? null) : s.activeChatId;
+      persistChatSessions(sessions);
+      return { chatSessions: sessions, activeChatId };
+    }),
+  renameChat: (id, title) =>
+    set((s) => {
+      const sessions = s.chatSessions.map((c) => (c.id === id ? { ...c, title, updatedAt: Date.now() } : c));
+      persistChatSessions(sessions);
+      return { chatSessions: sessions };
+    }),
+  setActiveChat: (id) => set({ activeChatId: id }),
+  setActiveChatMessages: (updater) =>
+    set((s) => {
+      if (!s.activeChatId) return {};
+      const sessions = s.chatSessions.map((c) => {
+        if (c.id !== s.activeChatId) return c;
+        const next = typeof updater === 'function' ? updater(c.messages) : updater;
+        return { ...c, messages: next, updatedAt: Date.now() };
+      });
+      persistChatSessions(sessions);
+      return { chatSessions: sessions };
+    }),
+  setChatCliSession: (chatId, sessionId) =>
+    set((s) => {
+      const sessions = s.chatSessions.map((c) =>
+        c.id === chatId ? { ...c, opencodeSessionId: sessionId || undefined, updatedAt: Date.now() } : c
+      );
+      persistChatSessions(sessions);
+      return { chatSessions: sessions };
+    }),
   isChatOpen: true,
   toggleChat: () => set((s) => ({ isChatOpen: !s.isChatOpen })),
 

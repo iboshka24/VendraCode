@@ -255,6 +255,19 @@ flowchart TD
 5. **Никакого фейка**: удалены сообщения «✓ All changes synced with The Shared Brain and Git worktree» (ложь), детект квоты по подстроке `'402'`, и регексп-угадывание имён файлов из текста агента (`(editing|wrote|created) src/x.ts`) — вместо него реальная история действий `brain:actionRecorded`.
 6. **Правки агентов летят в роум**: `create_file` / `edit_file` теперь дополнительно вызывают `brainClient.sendDiff()` (workspace-relative путь) и берут advisory lock, поэтому тиммейты и их агенты видят изменения агента вживую.
 
+### 3.5c. Постоянные чаты и контекст агента
+
+**Было:** сообщения жили в `useState` внутри `AIChat` — перезагрузка окна или перезапуск приложения стирали всю переписку, а каждый запуск OpenCode был новым (`opencode run --auto "<prompt>"`), поэтому агент не помнил предыдущие сообщения. UI выбора чатов не было вовсе.
+
+**Стало:**
+- `ChatSession` (`src/types/index.ts`) → стор → `localStorage['vendracode-chats-v1']` (до 60 чатов, до 200 сообщений в каждом, запись через `persistChatSessions` с мягкой деградацией при переполнении storage).
+- Действия стора: `createChat` / `deleteChat` / `renameChat` / `setActiveChat` / `setActiveChatMessages` / `setChatCliSession`.
+- UI: пилюля чата в шапке AI-панели со списком (заголовок, число сообщений, время, пометка `ctx` если у чата есть CLI-сессия), кнопка **New**, удаление, авто-заголовок из первого сообния (`deriveChatTitle`).
+- **Контекст OpenCode:** раннер запускает `opencode run --format json --auto …`, парсит NDJSON (`src/utils/opencodeStream.ts`): из каждого события забирается `sessionID` и сохраняется в чат, текст (`part.type === 'text'`) показывается пользователю, `error.message` surfaces как предупреждение, не-JSON строки не проглатываются. Следующее сообщение того же чата запускается с `-s <sessionID>`, поэтому агент продолжает ровно ту же сессию с полным контекстом.
+- Если у активного провайдера endpoint OpenRouter, дополнительно передаётся `--model openrouter/<model>` (`opencodeModelOverride`) — проверено на `openrouter/nvidia/nemotron-3.5-lightning:free`.
+
+**Проверено вживую** (`/tmp/vc-tests/chat-persist-test.mjs`, 12/12): два чата сохраняются после полного перезапуска приложения (заголовки, сообщения, `opencodeSessionId`), переключение часа в UI меняет активную переписку, аргументы продолжения контекста собираются корректно, парсер корректно разбирает реальный поток OpenCode.
+
 ### 3.5b. Креды OpenCode → бесплатные модели реально работают
 
 - `~/.local/share/opencode/opencode.db` (таблица `credential`) читается через `sqlite3 -readonly -json`; значения — JSON-конверты `{"type":"key","key":"sk-…"}`, которые распаковываются.
