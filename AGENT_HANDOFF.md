@@ -316,7 +316,7 @@ npm run build:mac   # .dmg + .zip
 npm run build:all   # все три платформы
 ```
 
-**Автосборка через GitHub Actions** — [`.github/workflows/build.yml`](file:///home/ibrohim/VendraCode/.github/workflows/build.yml):
+**Автосборка через GitHub Actions** — [`.github/workflows/build.yml`](file:///home/ibrohim/VendraCode/.github/workflows/build.yml) (репозиторий: https://github.com/iboshka24/VendraCode):
 - Тег `v1.0.1` → сборка матрицей на `ubuntu` / `windows` / `macos` + автоматический GitHub Release со всеми артефактами.
 - `workflow_dispatch` → ручной запуск с опцией *publish*.
 - PR в `main` → только валидация (`tsc --noEmit` + сборка), без релиза.
