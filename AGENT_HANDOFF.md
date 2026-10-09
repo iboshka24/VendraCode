@@ -335,6 +335,46 @@ npm run build:all   # все три платформы
 - PR в `main` → только валидация (`tsc --noEmit` + сборка), без релиза.
 - `node-pty` использует **N-API** (`node-addon-api`), поэтому нативный модуль пересобирается на любом раннере без дополнительной настройки toolchain.
 
+### 4.4b. Сборка под Windows одной командой
+
+**Двойной клик:** `build-windows.bat` в корне репозитория.
+**Или вручную:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
+```
+
+Скрипт (`scripts/build-windows.ps1`, обёртка `build-windows.bat`) делает всё сам:
+
+| Режим | Что строит |
+|---|---|
+| `full` (по умолчанию) | NSIS-инсталлятор + portable `.exe` |
+| `installer` | только NSIS setup `.exe` |
+| `portable` | только portable `.exe` |
+| `dir` | распакованная сборка `release\win-unpacked` (быстрее всего, для проверки) |
+
+```bash
+build-windows.bat                     # полная сборка
+build-windows.bat portable            # только портативный exe
+build-windows.bat full -SkipInstall   # не переустанавливать зависимости
+build-windows.bat dir -Force          # без вопросов, неинтерактивно
+```
+
+Что проверяется перед сборкой:
+1. **Node >= 18** и наличие `npm` — иначе понятная ошибка со ссылкой.
+2. **Python** — нужен `node-gyp` для компиляции `node-pty`.
+3. **Visual Studio C++ Build Tools** — через `vswhere.exe`; если не найдены, выводится точная команда `winget install` и спрашивает продолжать (или продолжает сразу с `-Force`).
+4. `npm ci` (или `npm install` без lock-файла) — здесь и компилируется нативный модуль.
+5. `tsc --noEmit` — тайпчек раньше упаковки (можно отключить `-SkipTypeCheck`).
+6. `npm run build` — Vite-бандл рендерера.
+7. `electron-builder --win [nsis|portable|--dir] --publish never` — `--publish never` отключает поиск GitHub-креденшелов.
+8. Список готовых `.exe` с размерами в `release\`.
+
+Тот же результат доступен через npm: `build:win:full`, `build:win:installer`, `build:win:portable`, `build:win:fast`, `build:win`.
+
+> Синтаксис `--win nsis` / `--win portable` (цель позиционно, не `--target=`) проверен на `electron-builder 24.13.3`.
+> Иконка уже готова: `build/icon.ico` (6 размеров, 16-256 px).
+
 ### 4.5. Деплой изменений в Cloudflare Workers (`brain.vendra.uz`)
 ```bash
 cd /home/ibrohim/VendraCode/cloudflare

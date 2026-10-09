@@ -92,6 +92,32 @@ npm run build:mac      # macOS (DMG, zip)
 npm run build:all
 ```
 
+### Windows one-command build
+
+Double-click **`build-windows.bat`**, or run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
+```
+
+The script checks Node / npm / Python / Visual Studio C++ Build Tools (printing
+the exact `winget install` command when something is missing), installs
+dependencies including the `node-pty` native build, type-checks, builds the
+renderer, runs electron-builder and lists the resulting `.exe` files.
+
+```bash
+build-windows.bat                 # NSIS installer + portable .exe
+build-windows.bat portable        # portable .exe only
+build-windows.bat installer       # NSIS installer only
+build-windows.bat dir             # unpacked build (fastest)
+
+npm run build:win:full            # the same, via npm
+npm run build:win:fast            # unpacked build, via npm
+```
+
+No local Windows machine? Push a tag (`git tag v1.0.0 && git push --tags`) and the
+GitHub Actions workflow builds `.exe`, `.dmg`, AppImage and `.deb` for you.
+
 ## ⚙️ Configuration
 
 ### LLM Providers
