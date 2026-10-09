@@ -526,36 +526,62 @@ ipcMain.handle('brain:reportAction', async (_event, action) => {
 
 // ─── Local Agent CLI Detection & Execution ─────────────────────────
 ipcMain.handle('cli:detectAll', async () => {
+  // Fallback locations are derived from the current user's home directory so
+  // the detector works on any machine (no hardcoded usernames).
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const userBins = ['.local/bin', '.opencode/bin', '.npm-global/bin', '.local/share/fnm/aliases/default/bin', '.bun/bin'];
+  const fallbacksFor = (bin) => [
+    ...userBins.map((dir) => path.join(home, dir, bin)),
+    path.join('/usr/local/bin', bin),
+    path.join('/usr/bin', bin),
+    path.join('/bin', bin),
+  ];
+
   const clis = [
-    { id: 'agy', name: 'Antigravity CLI', bin: 'agy', fallbackPaths: ['/home/ibrohim/.local/bin/agy', '/usr/local/bin/agy'] },
-    { id: 'cline', name: 'Cline CLI', bin: 'cline', fallbackPaths: ['/usr/bin/cline', '/usr/local/bin/cline'] },
-    { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', fallbackPaths: ['/home/ibrohim/.opencode/bin/opencode', '/usr/local/bin/opencode'] },
-    { id: 'claude', name: 'Claude Code CLI', bin: 'claude', fallbackPaths: ['/usr/bin/claude', '/usr/local/bin/claude'] },
+    { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', fallbackPaths: fallbacksFor('opencode') },
+    { id: 'claude', name: 'Claude Code CLI', bin: 'claude', fallbackPaths: fallbacksFor('claude') },
+    { id: 'agy', name: 'Antigravity CLI', bin: 'agy', fallbackPaths: fallbacksFor('agy') },
+    { id: 'cline', name: 'Cline CLI', bin: 'cline', fallbackPaths: fallbacksFor('cline') },
   ];
 
   const results = await Promise.all(
     clis.map(async (cli) => {
       return new Promise((resolve) => {
-        exec(`which ${cli.bin}`, (err, stdout) => {
+        const resolveWith = (detectedPath) => {
+          if (!detectedPath) {
+            resolve({
+              id: cli.id, name: cli.name, bin: cli.bin,
+              isInstalled: false, path: null, version: '',
+            });
+            return;
+          }
+
+          // A binary that exists but cannot execute (e.g. a stale wrapper) is
+          // reported as not installed instead of failing later at spawn time.
+          execFile(detectedPath, ['--version'], { timeout: 15000 }, (verErr, stdout) => {
+            resolve({
+              id: cli.id,
+              name: cli.name,
+              bin: cli.bin,
+              isInstalled: !verErr,
+              path: !verErr ? detectedPath : null,
+              version: !verErr ? (stdout || '').trim().split('\n')[0].slice(0, 60) : '',
+            });
+          });
+        };
+
+        execFile('which', [cli.bin], (err, stdout) => {
           let detectedPath = (!err && stdout.trim()) ? stdout.trim() : null;
 
           if (!detectedPath) {
             for (const fp of cli.fallbackPaths) {
-              if (fs.existsSync(fp)) {
-                detectedPath = fp;
-                break;
-              }
+              try {
+                if (fs.existsSync(fp)) { detectedPath = fp; break; }
+              } catch {}
             }
           }
 
-          resolve({
-            id: cli.id,
-            name: cli.name,
-            bin: cli.bin,
-            isInstalled: !!detectedPath,
-            path: detectedPath,
-            version: 'Installed',
-          });
+          resolveWith(detectedPath);
         });
       });
     })
@@ -590,13 +616,18 @@ ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cw
       const text = data.toString();
       broadcastToWindow('cli:agentOutput', { agentId, type: 'stdout', text });
 
-      // Brain coordination: parse tool usage or file edits from CLI outputs
-      const fileMatch = text.match(/(?:editing|wrote|created|patching|touching|reading)\s+([a-zA-Z0-9_\-\./\\]+)/i);
-      if (fileMatch) {
-        const touchedFile = fileMatch[1];
-        activeLocks.set(touchedFile, { agentId, agentName: cliBin, timestamp: Date.now() });
-        broadcastToWindow('brain:locksUpdated', Object.fromEntries(activeLocks));
-      }
+      // Record the run in the brain history (what really happened — no
+      // filenames are guessed from the agent's prose output).
+      brainHistory.push({
+        id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        agentId,
+        agentName: cliBin,
+        action: 'cli_output',
+        summary: `${cliBin}: ${text.trim().slice(0, 120) || 'output'}`,
+        timestamp: Date.now(),
+      });
+      if (brainHistory.length > 200) brainHistory.shift();
+      broadcastToWindow('brain:actionRecorded', brainHistory[brainHistory.length - 1]);
     });
 
     child.stderr.on('data', (data) => {
@@ -635,6 +666,88 @@ ipcMain.handle('cli:stopAgent', async (_event, agentId) => {
 });
 
 // ─── Live Dynamic Model Scanner IPC ────────────────────────────────
+// ─── OpenCode Credential Store (reuse the user's own logins) ────────
+
+/**
+ * OpenCode keeps its own provider credentials in a SQLite database. Reading
+ * them lets the IDE reuse logins the user already made (OpenRouter, …) instead
+ * of asking for keys a second time. Data never leaves this machine.
+ * Returns [] when the database or the sqlite3 binary is unavailable.
+ */
+function readOpenCodeCredentials() {
+  const dbPath = path.join(homeDir, '.local', 'share', 'opencode', 'opencode.db');
+  if (!fs.existsSync(dbPath)) return [];
+
+  return new Promise((resolve) => {
+    execFile(
+      'sqlite3',
+      ['-readonly', '-json', dbPath, 'SELECT integration_id, value FROM credential'],
+      { timeout: 8000 },
+      (error, stdout) => {
+        if (error || !stdout.trim()) { resolve([]); return; }
+        try {
+          const rows = JSON.parse(stdout);
+          const credentials = [];
+          for (const row of rows) {
+            if (!row || typeof row.integration_id !== 'string' || typeof row.value !== 'string') continue;
+            // Values are JSON envelopes: {"type":"key","key":"sk-…"} (or an OAuth
+            // payload). Unwrap the usable secret; skip anything else.
+            let secret = row.value;
+            try {
+              const envelope = JSON.parse(row.value);
+              if (envelope && typeof envelope === 'object') {
+                secret = envelope.key || envelope.access_token || envelope.value || '';
+              }
+            } catch {
+              /* plain string credential */
+            }
+            if (secret) credentials.push({ integration_id: row.integration_id, value: secret });
+          }
+          resolve(credentials);
+        } catch {
+          resolve([]);
+        }
+      }
+    );
+  });
+}
+
+/** Credentials the scanner can hand to a discovered model (never exposed raw). */
+async function resolveProviderCredential({ providerId = '', provider = '', envVar = '' } = {}) {
+  const candidates = [`${providerId} ${provider}`.toLowerCase()];
+
+  const fromEnv = envVar ? process.env[envVar] : null;
+  if (fromEnv) return { value: fromEnv, source: envVar };
+
+  try {
+    const credentials = await readOpenCodeCredentials();
+    for (const credential of credentials) {
+      const id = credential.integration_id.toLowerCase();
+      if (candidates.some((needle) => id.includes(needle) || needle.includes(id))) {
+        return { value: credential.value, source: `opencode:${credential.integration_id}` };
+      }
+    }
+  } catch {}
+
+  return { value: '', source: null };
+}
+
+ipcMain.handle('credentials:list', async () => {
+  try {
+    const credentials = await readOpenCodeCredentials();
+    return {
+      available: credentials.length > 0,
+      // Only metadata is exposed to the renderer, never the secret itself.
+      providers: credentials.map((c) => ({
+        integration: c.integration_id,
+        keyPreview: `${c.value.slice(0, 6)}…${c.value.slice(-4)}`,
+      })),
+    };
+  } catch {
+    return { available: false, providers: [] };
+  }
+});
+
 // ─── Model Scanner Helpers ─────────────────────────────────────────
 
 /**
@@ -673,15 +786,23 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
         }
       }
 
-      // OpenRouter is a separate endpoint that needs its own API key
+      // OpenRouter is a separate endpoint that needs its own API key. Sources:
+      // env var → an `openrouter` provider in opencode.json → the credential
+      // store the OpenCode CLI already logged into.
       const orProvider = (opencodeCfg?.provider?.openrouter) || (opencodeCfg?.provider?.['openrouter-free']) || null;
-      const orCredential = resolveCredential(orProvider?.options?.apiKey || process.env.OPENROUTER_API_KEY || '');
+      const fromConfig = resolveCredential(orProvider?.options?.apiKey || '');
+      const fromEnv = process.env.OPENROUTER_API_KEY || '';
+      const stored = fromConfig.value || fromEnv ? { value: fromConfig.value || fromEnv, source: fromConfig.value ? 'opencode.json' : 'OPENROUTER_API_KEY' } : await resolveProviderCredential({ providerId: 'openrouter-free', provider: 'openrouter' });
       const OPENROUTER_ROUTE = {
         providerId: 'openrouter-free',
+        providerName: 'OpenRouter (Free)',
         baseUrl: 'https://openrouter.ai/api/v1',
-        apiKey: orCredential.value,
-        requiresKey: orCredential.value ? false : true,
-        keyHint: orCredential.value ? undefined : 'add an OpenRouter key in Settings (or set OPENROUTER_API_KEY)',
+        apiKey: stored.value,
+        keySource: stored.source,
+        requiresKey: stored.value ? false : true,
+        keyHint: stored.value
+          ? (stored.source && stored.source.startsWith('opencode:') ? `key reused from your OpenCode login (${stored.source.slice('opencode:'.length)})` : undefined)
+          : 'add an OpenRouter key in Settings (or set OPENROUTER_API_KEY)',
       };
 
       // User's configured opencode.json models
@@ -741,8 +862,10 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
         console.warn('OpenRouter free models query fallback:', err.message);
       }
 
-      // Default verified OpenCode free models (also OpenRouter-hosted)
-      const verifiedFree = [
+      // Static fallback list, used ONLY when the live catalog could not be
+      // fetched (offline). OpenRouter's free tier changes often, so anything
+      // from the live catalog always wins over these entries.
+      const verifiedFree = { list: [
         { id: 'openrouter/auto', name: 'OpenRouter Auto (Free Router)', provider: 'opencode', source: 'OpenRouter · needs API key' },
         { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (Free)', provider: 'google', source: 'OpenRouter · needs API key' },
         { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B Instruct (Free)', provider: 'meta', source: 'OpenRouter · needs API key' },
@@ -752,8 +875,16 @@ ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, api
         { id: 'mistralai/mistral-small-24b-instruct-2501:free', name: 'Mistral Small 24B (Free)', provider: 'mistral', source: 'OpenRouter · needs API key' },
         { id: 'nvidia/nemotron-3.5-lightning:free', name: 'NVIDIA Nemotron 3.5 (Free)', provider: 'nvidia', source: 'OpenRouter · needs API key' },
         { id: 'liquid/lfm-2.5-2.6b:free', name: 'Liquid LFM 2.6B (Free)', provider: 'liquid', source: 'OpenRouter · needs API key' },
-      ];
-      verifiedFree.forEach((m) => models.push({ ...m, ...OPENROUTER_ROUTE }));
+      ] };
+      // If the live request failed, surface the fallback list (flagged).
+      const liveFetched = models.some((m) => m.providerId === 'openrouter-free');
+      if (!liveFetched) {
+        verifiedFree.list.forEach((m) => models.push({
+          ...m,
+          ...OPENROUTER_ROUTE,
+          source: 'OpenRouter · offline fallback (may be stale)',
+        }));
+      }
     }
 
     // 2. Ollama local models

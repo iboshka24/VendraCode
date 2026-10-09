@@ -4,8 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import { brainClient } from '@/services/brainClient';
 import { remoteClassToken, renderRemoteStyles } from '@/utils/remoteStyles';
 import { toWorkspaceRelative } from '@/utils/workspacePath';
-import { X, Circle, FolderOpen, Compass, Sparkles, Play, Users, GitCommit, Shield } from 'lucide-react';import { motion, AnimatePresence } from 'framer-motion';
-import { LiveAgentStream } from './LiveAgentStream';
+import { X, Circle, FolderOpen, Compass, Sparkles } from 'lucide-react';import { motion, AnimatePresence } from 'framer-motion';
 import { VendraLogo } from './VendraLogo';
 import { LivePeersBadge } from './LivePeersBadge';
 
@@ -30,7 +29,6 @@ export function CodeEditor() {
   const suppressBroadcastRef = useRef(0);
   /** Latest active tab, readable from the (memoized) Monaco mount callback. */
   const activeTabRef = useRef<any>(null);
-  const [isLiveStreaming, setIsLiveStreaming] = useState(false);
 
   const activeTab = openTabs.find((t) => t.id === activeTabId);
   activeTabRef.current = activeTab;
@@ -243,23 +241,6 @@ export function CodeEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [markTabClean]);
 
-  // If in live stream view, show the full multi-agent collaborative typing screen
-  if (isLiveStreaming) {
-    return (
-      <div className="flex-1 min-h-0 bg-background p-3">
-        <LiveAgentStream
-          filename={activeTab?.name || 'src/auth/authenticate.ts'}
-          initialContent={activeTab?.content}
-          onApplyToFile={(code) => {
-            applyProgrammaticContent(code);
-            setIsLiveStreaming(false);
-          }}
-          onClose={() => setIsLiveStreaming(false)}
-        />
-      </div>
-    );
-  }
-
   // Welcome Screen when no files open
   if (openTabs.length === 0) {
     return (
@@ -280,16 +261,6 @@ export function CodeEditor() {
           </p>
 
           <div className="flex flex-col gap-2 items-center">
-            {/* Live Streaming Animation Launcher */}
-            <button
-              type="button"
-              onClick={() => setIsLiveStreaming(true)}
-              className="btn btn-primary w-52 text-xs justify-center gap-2 shadow-lg"
-            >
-              <Play size={13} className="text-popfg fill-current" />
-              <span>Watch Live Agent Typing</span>
-            </button>
-
             <button
               type="button"
               onClick={handleOpenFolder}
@@ -369,16 +340,9 @@ export function CodeEditor() {
         <div className="flex items-center gap-2 shrink-0 pr-2">
           <LivePeersBadge />
 
-          <button
-            type="button"
-            onClick={() => setIsLiveStreaming(true)}
-            className="btn btn-ghost h-6 px-2 text-[11px] font-sans flex items-center gap-1.5 border border-border"
-            title="Open Amoeba live collaborative typing display"
-          >
-            <span className="dotpulse" />
-            <Play size={10} className="fill-current text-ok" />
-            <span>Live Typing Stream</span>
-          </button>
+          <span className="hidden md:flex items-center gap-1.5 text-[10px] font-mono text-text-hint">
+            Teammate edits stream into the open file automatically
+          </span>
         </div>
       </div>
 

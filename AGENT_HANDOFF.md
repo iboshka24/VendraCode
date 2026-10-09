@@ -11,7 +11,7 @@
 
 ### Главные фичи:
 1. **Multi-Agent Coordination (Оркестрация агентов)**: одновременная параллельная работа любых AI-агентов на машинах команды (**OpenCode**, **Claude Code**, **Cline**, **Antigravity CLI**, **Hermes Agent**).
-2. **Amoeba Live Co-typing**: отображение посимвольной / пословной совместной печати кода агентами в реальном времени с плавающими бейджами курсоров (`Alice [Claude]`, `Chen [Codex]`, `You [OpenCode]`), индикатором скорости печати (`words/sec`) и 5-секундными Git-снапшотами без конфликтов.
+2. **Amoeba Live Co-editing (реальное)**: отображение посимвольной / пословной совместной печати кода агентами в реальном времени с плавающими бейджами курсоров (`Alice [Claude]`, `Chen [Codex]`, `You [OpenCode]`), индикатором скорости печати (`words/sec`) и 5-секундными Git-снапшотами без конфликтов.
 3. **Shared Central GitHub Repo Sync**: возможность привязать один общий GitHub-репозиторий на всех друзей; каждый участник и агент работает в изолированном **Git worktree**, поэтому рабочие ветки не ломают основной код.
 4. **Cloudflare Edge Coordination (`brain.vendra.uz`)**: глобальный координационный сервер на Cloudflare Workers с WebSockets (`/ws`), который связывает сессии друзей, управляет блокировками файлов (`file locks`) и транслирует стримы кода. Основной сайт на домене `vendra.uz` **не затронут**.
 5. **Interactive PTY Terminal**: встроенный терминал на нативном `node-pty` + `xterm.js`, открывающий реальный shell (`/bin/bash` / `/bin/zsh`) с поддержкой цветов, ANSI-последовательностей и ресайза.
@@ -38,7 +38,7 @@ Git-ветка: `main` (чистый статус, все последние и�
 │   ├── components/
 │   │   ├── AIChat.tsx              # Чат с AI, выбор агента/модели, автономный агентский движок
 │   │   ├── CodeEditor.tsx          # Monaco-редактор: табы, live-дифф трансляция, remote-декорации
-│   │   ├── LiveAgentStream.tsx     # Amoeba-стиль: живая печать кода агентами с бейджами и WPS
+│   │   ├── LivePeersBadge.tsx      # Бейдж присутствия (brain.vendra.uz online/offline + N пиров)
 │   │   ├── LivePeersBadge.tsx      # Бейдж присутствия (brain.vendra.uz online/offline + N пиров)
 │   │   ├── WorktreeSwitcher.tsx    # Переключатель активных Git Worktrees в статус-баре
 │   │   ├── MissionControl.tsx      # Amoeba Mission Control: дорожки (lanes), Approval Gates, Overlaps
@@ -243,22 +243,23 @@ flowchart TD
 
 ---
 
-### 3.5. Живая печать кода в стиле Amoeba (`LiveAgentStream.tsx`)
+### 3.5. Реальный запуск агентов (стриминг через IPC)
 
-1. **Компонент**: [`src/components/LiveAgentStream.tsx`](file:///home/ibrohim/VendraCode/src/components/LiveAgentStream.tsx).
-2. **Как это работает в редакторе**:
-   - В верхней панели [`CodeEditor.tsx`](file:///home/ibrohim/VendraCode/src/components/CodeEditor.tsx) есть кнопка **«Watch Live Agent Typing»**.
-   - Компонент принимает текущее содержимое активного файла и токенизирует его в слова.
-   - Симулирует совместную работу нескольких агентов в реальном времени:
-     - `Alice [Claude Code]` (фиолетовый курсор `#7c3aed`)
-     - `Chen [Codex]` (синий курсор `#4dabf7`)
-     - `Bob [Cline]` (оранжевый курсор `#ff922b`)
-     - `You [OpenCode]` (изумрудный курсор `#38d9a9`)
-   - Показывает реальную скорость набора: **38–46 words/sec**.
-   - Анимирует 5-секундные Git-снапшоты: таймлайн `00:00 -> 00:05 -> 00:10 -> 00:15` с надписью `✓ Team up to date · Zero conflicts`.
-   - При подключении к сессии `brain.vendra.uz/ws` компонент принимает реальные пакеты `typing:stream` от других подключенных пользователей!
+1. **Детект CLI** (`cli:detectAll`): фолбэк-пути строятся от `os.homedir()` (никаких захардкоженных `/home/ibrohim`), каждый найденный бинарь проверяется запуском `--version`. Поэтому сломанная обёртка (`/usr/bin/claude` → `claude.exe` без нативного бинаря) **не** рапортуется как установленная, а рабочий cline определяется корректно.
+2. **Запуск** (`cli:spawnAgent`) — реальный дочерний процесс с аргументами под конкретный CLI:
+   - OpenCode: `opencode run --auto "<prompt>"` (проверено на opencode v2.0.15)
+   - Claude Code: `claude -p "<prompt>"`
+   - Agy / Cline: `run --auto` / `run`
+3. **Стриминг вывод**а: `cli:onAgentOutput` пишет stdout/stderr прямо в сообщение чата (троттлинг 120 мс, обрезка длинного вывода), `cli:onAgentExit` фиксирует реальный код выхода (`✅ exit 0 · 3.2s` / `❌ exit 1 · 12.0s`). Раньше использовался блокирующий `os.exec` с захардкоженным путём — вывод появлялся только в конце.
+4. **Отмена**: кнопка Stop → `cli:stopAgent`, плюс защита от дублей (`Agent already running`) и таймаут 15 минут.
+5. **Никакого фейка**: удалены сообщения «✓ All changes synced with The Shared Brain and Git worktree» (ложь), детект квоты по подстроке `'402'`, и регексп-угадывание имён файлов из текста агента (`(editing|wrote|created) src/x.ts`) — вместо него реальная история действий `brain:actionRecorded`.
+6. **Правки агентов летят в роум**: `create_file` / `edit_file` теперь дополнительно вызывают `brainClient.sendDiff()` (workspace-relative путь) и берут advisory lock, поэтому тиммейты и их агенты видят изменения агента вживую.
 
----
+### 3.5b. Креды OpenCode → бесплатные модели реально работают
+
+- `~/.local/share/opencode/opencode.db` (таблица `credential`) читается через `sqlite3 -readonly -json`; значения — JSON-конверты `{"type":"key","key":"sk-…"}`, которые распаковываются.
+- Живой каталог OpenRouter (`/api/v1/models`) — источник истины; статический список остался только офлайн-фолбэком с пометкой «may be stale» (поэтому «модели, которые больше не бесплатны», не попадают в выбор).
+- Проверено живьём: `nvidia/nemotron-3.5-lightning:free` → HTTP 200 с реальным ответом.
 
 ### 3.6. Связка общего репозитория GitHub и Git Worktrees
 

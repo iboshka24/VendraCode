@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Send, Bot, User, Loader2, Wrench, X, Settings, ChevronDown, 
   Sparkles, Square, Globe, Camera, Cpu, Terminal, ExternalLink,
@@ -6,6 +6,9 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/stores/appStore';
+import type { LocalCLIDetected } from '@/types';
+import { brainClient } from '@/services/brainClient';
+import { toWorkspaceRelative } from '@/utils/workspacePath';
 import { ChatMessage, ToolCall, ProviderConfig, ApprovalRequest } from '@/types/index';
 import { AGENT_TOOLS } from '@/utils/providers';
 
@@ -47,7 +50,8 @@ export const AIChat: React.FC = () => {
     updateProvider,
     upsertProvider,
     updateTabContent,
-    openTabs
+    openTabs,
+    localCLIs
   } = useAppStore();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -75,6 +79,18 @@ export const AIChat: React.FC = () => {
   }>>([]);
   const [isScanningModels, setIsScanningModels] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
+
+  // Live CLI agent run (spawned via the main process, streamed back into chat)
+  const [runningAgent, setRunningAgent] = useState<{
+    agentId: string;
+    messageId: string;
+    bin: string;
+    startedAt: number;
+  } | null>(null);
+  const cliStreamBufferRef = useRef('');
+  const cliFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cliDetachRef = useRef<Array<() => void>>([]);
+  const cliTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Pending approval state
   const [pendingApproval, setPendingApproval] = useState<{
@@ -144,6 +160,16 @@ export const AIChat: React.FC = () => {
         case 'create_file':
         case 'edit_file':
           await api.fs.writeFile(args.path, args.content);
+          // Publish the edit to the swarm so teammates (and their agents) see it.
+          brainClient.sendDiff(
+            toWorkspaceRelative(args.path, workspacePath),
+            [{
+              range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+              text: String(args.content || '').split('\n')[0].slice(0, 400),
+              rangeLength: 0,
+            }]
+          );
+          brainClient.acquireLock(toWorkspaceRelative(args.path, workspacePath));
           if (api.brain?.broadcastTyping) {
             await api.brain.broadcastTyping({
               agentId: selectedAgent.id,
@@ -393,6 +419,192 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     }
   };
 
+  /** Tears down stream listeners/timers for a finished (or cancelled) run. */
+  const cleanupCliRun = useCallback(() => {
+    for (const detach of cliDetachRef.current) {
+      try { detach(); } catch {}
+    }
+    cliDetachRef.current = [];
+    if (cliFlushTimerRef.current) { clearTimeout(cliFlushTimerRef.current); cliFlushTimerRef.current = null; }
+    if (cliTimeoutRef.current) { clearTimeout(cliTimeoutRef.current); cliTimeoutRef.current = null; }
+    cliStreamBufferRef.current = '';
+  }, []);
+
+  // Any in-flight CLI run must be torn down when the panel unmounts
+  useEffect(() => () => {
+    if (cliFlushTimerRef.current) clearTimeout(cliFlushTimerRef.current);
+    if (cliTimeoutRef.current) clearTimeout(cliTimeoutRef.current);
+    for (const detach of cliDetachRef.current) { try { detach(); } catch {} }
+    cliDetachRef.current = [];
+  }, []);
+
+  /** Stops the running CLI agent (Stop button). */
+  const stopCliAgent = useCallback(async () => {
+    const run = runningAgent;
+    setRunningAgent(null);
+    cleanupCliRun();
+    if (run && window.vendraAPI?.cli) {
+      try { await window.vendraAPI.cli.stopAgent(run.agentId); } catch {}
+      setMessages(prev => prev.map(m => (m.id === run.messageId
+        ? { ...m, content: `${m.content || ''}\n\n⏹ **Stopped by user.**` }
+        : m)));
+    }
+  }, [runningAgent, cleanupCliRun]);
+
+  /**
+   * Runs a local CLI agent (OpenCode, Claude Code, …) as a real child process and
+   * streams its output into the chat message as it arrives. The binary is
+   * resolved from the detected agent list instead of a hardcoded path, the exit
+   * code is reported honestly, and the run can be cancelled.
+   */
+  const runCliAgent = async (
+    text: string,
+    baseMessages: ChatMessage[],
+    agent: ChatAgentOption
+  ) => {
+    const api = window.vendraAPI;
+    if (!api?.cli) {
+      setMessages(prev => [...prev, {
+        role: 'assistant', id: `err-${Date.now()}`, timestamp: Date.now(),
+        content: '⚠️ Agent bridge unavailable (preload API missing).',
+      }]);
+      setAgentStatus?.('idle');
+      return;
+    }
+
+    // Resolve the real binary from the detection list; never guess a path.
+    const detected: LocalCLIDetected | undefined = localCLIs.find((c) => c.id === agent.id);
+    const cliBin = detected?.isInstalled ? detected.path || detected.bin : null;
+    if (!cliBin) {
+      setMessages(prev => [...prev, {
+        role: 'assistant', id: `err-${Date.now()}`, timestamp: Date.now(),
+        content: [
+          `⚠️ **${agent.name} is not installed on this machine.**`,
+          '',
+          `Looked for \`${agent.bin}\` in PATH and the usual install locations.`,
+          `Install it, then press **Detect agents** again — or switch the agent to **Vendra AI** (built-in engine) in the picker above.`,
+        ].join('\n'),
+      }]);
+      setAgentStatus?.('idle');
+      return;
+    }
+
+    const agentId = `${agent.id}-${Date.now()}`;
+    const messageId = `cli-run-${Date.now()}`;
+    const startedAt = Date.now();
+
+    const seedMessage: ChatMessage = {
+      role: 'assistant',
+      id: messageId,
+      timestamp: startedAt,
+      content: `⚡ **${agent.name}** running in \`${cliBin}\`\n\nWorkspace: \`${workspacePath || '—'}\`\n\n\`\`\`\n(starting…)`,
+    };
+    setMessages([...baseMessages, seedMessage]);
+    setAgentStatus?.('running');
+
+    // ── stream plumbing ───────────────────────────────────────────
+    let closed = false;
+    let exitCode: number | null = null;
+
+    const flush = () => {
+      cliFlushTimerRef.current = null;
+      const body = cliStreamBufferRef.current;
+      if (!body) return;
+      const trimmed = body.length > 6000 ? `…${body.slice(-5600)}` : body;
+      setMessages(prev => prev.map(m => (m.id === messageId
+        ? { ...m, content: `${seedMessage.content}\n${trimmed}\n\`\`\`` }
+        : m)));
+    };
+    const scheduleFlush = () => {
+      if (cliFlushTimerRef.current) return;
+      cliFlushTimerRef.current = setTimeout(flush, 120);
+    };
+
+    const detachOutput = api.cli.onAgentOutput((chunk) => {
+      if (chunk.agentId !== agentId) return;
+      cliStreamBufferRef.current += chunk.text || '';
+      scheduleFlush();
+    });
+    const detachExit = api.cli.onAgentExit(({ agentId: exitedId, code }) => {
+      if (exitedId !== agentId || closed) return;
+      closed = true;
+      exitCode = code ?? 0;
+    });
+    cliDetachRef.current = [detachOutput, detachExit];
+
+    // A CLI agent may legitimately take a while; stop it after 15 minutes.
+    cliTimeoutRef.current = setTimeout(async () => {
+      if (closed) return;
+      try { await api.cli.stopAgent(agentId); } catch {}
+    }, 15 * 60 * 1000);
+
+    // ── spawn: per-CLI argument shapes (verified against each CLI) ─
+    const argsByAgent: Record<string, string[]> = {
+      opencode: ['run', '--auto'],
+      claude: ['-p', '--dangerously-skip-permissions'],
+      agy: ['run', '--auto'],
+      cline: ['run'],
+    };
+    const args = argsByAgent[agent.id] ?? [];
+
+    let spawnOk = true;
+    let spawnError = '';
+    try {
+      const result = await api.cli.spawnAgent({ agentId, cliBin, args, cwd: workspacePath || undefined, prompt: text });
+      if (!result?.success) {
+        spawnOk = false;
+        spawnError = result?.error || 'spawn refused';
+      }
+    } catch (err: any) {
+      spawnOk = false;
+      spawnError = err?.message || String(err);
+    }
+
+    if (!spawnOk) {
+      closed = true;
+      cleanupCliRun();
+      setAgentStatus?.('idle');
+      setMessages(prev => prev.map(m => (m.id === messageId
+        ? { ...m, content: `${seedMessage.content}\n\n⚠️ **Failed to start ${agent.name}**: ${spawnError}` }
+        : m)));
+      return;
+    }
+
+    setRunningAgent({ agentId, messageId, bin: cliBin, startedAt });
+
+    // Wait for the process to finish (the exit listener above resolves it).
+    await new Promise<void>((resolve) => {
+      const poll = setInterval(() => {
+        if (closed) { clearInterval(poll); resolve(); }
+      }, 120);
+      cliDetachRef.current.push(() => clearInterval(poll));
+    });
+
+    if (cliFlushTimerRef.current) { clearTimeout(cliFlushTimerRef.current); cliFlushTimerRef.current = null; }
+    flush();
+    cleanupCliRun();
+    setRunningAgent(null);
+    setAgentStatus?.('idle');
+
+    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const body = cliStreamBufferRef.current.trim();
+    const verdict = (exitCode === 0)
+      ? `✅ exit 0 · ${seconds}s`
+      : `❌ exit ${exitCode ?? '?'} · ${seconds}s`;
+    const tail = body && !seedMessage.content.includes(body.slice(0, 40))
+      ? `\n\n\`\`\`\n${body.length > 6000 ? `…${body.slice(-5600)}` : body}\n\`\`\``
+      : '';
+
+    setMessages(prev => prev.map(m => (m.id === messageId
+      ? { ...m, content: `${seedMessage.content}${tail}\n\n${verdict}` }
+      : m)));
+
+    // Real side effect: the workspace watcher refreshes the explorer for us.
+    if (workspacePath && api.fs) {
+      try { setFileTree(await api.fs.readDir(workspacePath)); } catch {}
+    }
+  };
+
   // Dispatch message to agent (either native LLM or local CLI process)
   const sendMessage = async (text: string) => {
     if (!text.trim()) return;
@@ -409,70 +621,9 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     setInputValue('');
     setAgentStatus?.('running');
 
-    // ─── CASE A: Local CLI Process (e.g. OpenCode, Agy, Cline) ───
+    // ─── CASE A: Local CLI Process (OpenCode, Claude Code, …) ───
     if (selectedAgent.type === 'cli') {
-      try {
-        const agentThinkingId = `cli-${Date.now()}`;
-        const initialStatusMsg: ChatMessage = {
-          role: 'assistant',
-          id: agentThinkingId,
-          timestamp: Date.now(),
-          content: `⚡ Spawning local **${selectedAgent.name}** process in workspace...\n\nRouting command: \`${selectedAgent.bin} run "${text.replace(/"/g, '\\"')}"\``
-        };
-        currentMessages = [...currentMessages, initialStatusMsg];
-        setMessages(currentMessages);
-
-        let cliResult = { stdout: '', stderr: '', error: null as any, code: 0 };
-        if (window.vendraAPI?.os) {
-          const binPath = selectedAgent.id === 'opencode'
-            ? '/home/ibrohim/.opencode/bin/opencode'
-            : selectedAgent.bin;
-          cliResult = await window.vendraAPI.os.exec(
-            `${binPath} run --auto "${text.replace(/"/g, '\\"')}"`,
-            workspacePath || undefined
-          );
-        }
-
-        const combinedOutput = (cliResult.stdout || '') + (cliResult.stderr || '');
-        const isQuotaError = combinedOutput.includes('provider.quota') || combinedOutput.includes('402') || combinedOutput.includes('credits');
-
-        if (isQuotaError || (cliResult.error && !cliResult.stdout)) {
-          // OpenRouter quota or provider error: notify and seamlessly run autonomous engine
-          setMessages(prev => prev.map(m => {
-            if (m.id === agentThinkingId) {
-              return {
-                ...m,
-                content: `⚡ **OpenCode CLI Notice**: Local OpenRouter quota exceeded.\n\n🔄 **Autonomous Engine Fallback**: Handing task over to VendraCode Engine (${activeProvider?.name || 'NVIDIA NIM'} · ${activeProvider?.model}) under OpenCode persona...`
-              };
-            }
-            return m;
-          }));
-
-          await runAutonomousAgentLoop(text, currentMessages, selectedAgent.name);
-          return;
-        }
-
-        // Clean successful CLI output
-        const outputText = cliResult.stdout.trim() || cliResult.stderr.trim() || 'Process completed successfully.';
-        setMessages(prev => prev.map(m => {
-          if (m.id === agentThinkingId) {
-            return {
-              ...m,
-              content: `### ${selectedAgent.icon} ${selectedAgent.name} Output\n\n\`\`\`bash\n${outputText}\n\`\`\`\n\n✓ All changes synced with **The Shared Brain** and Git worktree.`
-            };
-          }
-          return m;
-        }));
-
-        if (workspacePath && window.vendraAPI?.fs) {
-          const entries = await window.vendraAPI.fs.readDir(workspacePath);
-          setFileTree(entries);
-        }
-      } catch (err: any) {
-        await runAutonomousAgentLoop(text, currentMessages, selectedAgent.name);
-      } finally {
-        setAgentStatus?.('idle');
-      }
+      await runCliAgent(text, currentMessages, selectedAgent);
       return;
     }
 
@@ -558,9 +709,25 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-text-primary font-medium">{agent.name}</span>
-                      <span className="text-[9px] px-1 py-0.2 rounded bg-bgdeep text-text-muted font-mono">{agent.badge}</span>
+                      {agent.type === 'cli' && (
+                        <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${
+                          localCLIs.find((c) => c.id === agent.id)?.isInstalled
+                            ? 'bg-ok/15 text-ok'
+                            : 'bg-danger/15 text-danger'
+                        }`}>
+                          {localCLIs.find((c) => c.id === agent.id)?.isInstalled ? 'installed' : 'not found'}
+                        </span>
+                      )}
+                      {agent.type === 'native' && (
+                        <span className="text-[9px] px-1 py-0.2 rounded bg-bgdeep text-text-muted font-mono">{agent.badge}</span>
+                      )}
                     </div>
                     <p className="text-[10px] text-text-muted mt-0.5 line-clamp-1">{agent.description}</p>
+                    {agent.type === 'cli' && localCLIs.find((c) => c.id === agent.id)?.isInstalled && (
+                      <p className="text-[9px] text-text-hint font-mono mt-0.5 truncate" title={localCLIs.find((c) => c.id === agent.id)?.path || ''}>
+                        {localCLIs.find((c) => c.id === agent.id)?.path}
+                      </p>
+                    )}
                   </div>
                 </button>
               ))}
@@ -993,13 +1160,22 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             rows={Math.min(5, inputValue.split('\n').length || 1)}
           />
           <div className="p-2 shrink-0">
-            {agentStatus === 'running' ? (
+            {runningAgent ? (
+              <button
+                type="button"
+                onClick={stopCliAgent}
+                className="btn btn-ghost h-7 w-7 p-0 rounded-lg text-danger hover:bg-danger/15"
+                title={`Stop ${runningAgent.bin} (running for ${Math.max(0, Math.round((Date.now() - runningAgent.startedAt) / 1000))}s)`}
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+              </button>
+            ) : agentStatus === 'running' ? (
               <button
                 type="button"
                 disabled
                 className="btn btn-ghost h-7 w-7 p-0 rounded-lg text-text-muted"
               >
-                <Square className="w-3.5 h-3.5 fill-current" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               </button>
             ) : (
               <button

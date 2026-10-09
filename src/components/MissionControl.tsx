@@ -10,99 +10,186 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 export const MissionControl: React.FC = () => {
   const {
-    agentLanes,
     approvals,
     resolveApproval,
-    addAgentLane,
-    updateAgentLane,
     activeLocks,
     brainActions,
     localCLIs,
     workspacePath,
+    brainPeers,
+    brainStatus,
+    brainRepoUrl,
+    brainSessionId,
+    remoteEdits,
+    worktrees,
+    addAgentLane,
+    agentLanes,
+    updateAgentLane,
   } = useAppStore();
 
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
   const [newAgentName, setNewAgentName] = useState('');
-  const [newAgentProvider, setNewAgentProvider] = useState<LLMProvider>('anthropic');
-  const [newAgentModel, setNewAgentModel] = useState('claude-3-7-sonnet');
-  const [hiveEnabled, setHiveEnabled] = useState(true);
-  const [swarmCap, setSwarmCap] = useState(4);
-  const [sharedGoal, setSharedGoal] = useState('Refactor authentication flow and coordinate lobby state with zero merge conflicts');
+  const [launchFeedback, setLaunchFeedback] = useState<string | null>(null);
 
-  // Computed file overlaps
-  const fileOverlaps = useMemo(() => {
-    const map: Record<string, string[]> = {};
-    
-    agentLanes.forEach(agent => {
-      agent.filesEditing.forEach(file => {
-        if (!map[file]) map[file] = [];
-        if (!map[file].includes(agent.name)) map[file].push(agent.name);
+  const myName = (() => {
+    try {
+      return localStorage.getItem('vendracode-peer-name') || 'you';
+    } catch {
+      return 'you';
+    }
+  })();
+
+  /**
+   * Lanes are derived from what is actually running/connected:
+   *   • every detected local CLI (installed or not)
+   *   • every peer currently connected to the brain session
+   *   • the local instance itself
+   * Nothing here is invented — if a CLI is missing it shows as not installed.
+   */
+  const lanes = useMemo(() => {
+    const result: AgentLane[] = [];
+
+    // Local instance
+    result.push({
+      id: 'local',
+      name: `${myName} (this IDE)`,
+      model: brainStatus === 'online' ? `brain session: ${brainSessionId}` : 'not connected to the brain',
+      provider: 'custom',
+      status: brainStatus === 'online' ? 'running' : 'idle',
+      currentTask: brainStatus === 'online'
+        ? `Connected · ${brainPeers.length} peer(s) in session${brainRepoUrl ? ` · ${brainRepoUrl}` : ''}`
+        : `Brain status: ${brainStatus}`,
+      filesEditing: Object.keys(activeLocks).filter((f) => activeLocks[f].agentName === myName),
+      progress: 0,
+      branch: worktrees.find((w) => w.path === workspacePath)?.branch || 'main',
+      messages: [],
+      avatar: myName.slice(0, 2).toUpperCase(),
+      color: '#7c3aed',
+    });
+
+    // Connected teammates (real WebSocket peers)
+    brainPeers.forEach((peer, index) => {
+      result.push({
+        id: `peer-${peer}`,
+        name: peer,
+        model: 'remote VendraCode peer',
+        provider: 'custom',
+        status: 'running',
+        currentTask: 'connected via brain.vendra.uz',
+        filesEditing: Object.keys(activeLocks).filter((f) => activeLocks[f].agentName === peer),
+        progress: 0,
+        branch: '—',
+        messages: [],
+        avatar: peer.slice(0, 2).toUpperCase(),
+        color: ['#38d9a9', '#4dabf7', '#f06595', '#ffa94d', '#b197fc'][index % 5],
       });
     });
 
-    if (activeLocks) {
-      Object.entries(activeLocks).forEach(([file, lock]) => {
-        if (!map[file]) map[file] = [];
-        if (!map[file].includes(lock.agentName)) map[file].push(lock.agentName);
+    // Detected local CLIs (real detection results)
+    localCLIs.forEach((cli) => {
+      result.push({
+        id: `cli-${cli.id}`,
+        name: cli.name,
+        model: cli.isInstalled ? `${cli.bin} (installed at ${cli.path})` : `${cli.bin} not found in PATH`,
+        provider: 'custom',
+        status: cli.isInstalled ? 'idle' : 'waiting',
+        currentTask: cli.isInstalled ? 'Ready — launch from the AI chat agent picker' : 'Install the CLI to enable this agent',
+        filesEditing: [],
+        progress: 0,
+        branch: 'main',
+        messages: [],
+        avatar: cli.bin.slice(0, 2).toUpperCase(),
+        color: '#b197fc',
       });
-    }
+    });
 
-    return Object.entries(map).filter(([_, agents]) => agents.length > 1);
-  }, [agentLanes, activeLocks]);
+    return result;
+  }, [localCLIs, brainPeers, brainStatus, brainSessionId, brainRepoUrl, activeLocks, worktrees, workspacePath, myName]);
+
+  /** Advisory locks that two different agents currently hold. */
+  const fileOverlaps = useMemo(() => {
+    const byFile: Record<string, string[]> = {};
+    for (const [file, lock] of Object.entries(activeLocks)) {
+      if (!byFile[file]) byFile[file] = [];
+      if (!byFile[file].includes(lock.agentName)) byFile[file].push(lock.agentName);
+    }
+    return Object.entries(byFile).filter(([, agents]) => agents.length > 1);
+  }, [activeLocks]);
+
+  const liveEdits = useMemo(
+    () => Object.values(remoteEdits).filter((e) => Date.now() - e.timestamp < 15000),
+    [remoteEdits]
+  );
+
+  const installedCLIs = localCLIs.filter((c) => c.isInstalled);
+
+  /**
+   * Launches a detected CLI with the same arguments the chat agent uses, so the
+   * behaviour matches the AI panel. The real exit code is reported back.
+   */
+  const handleLaunchCLI = async (cliId: string) => {
+    const cli = localCLIs.find((c) => c.id === cliId);
+    if (!cli?.isInstalled) return;
+    const agentId = `mission-${cliId}-${Date.now()}`;
+    const argsByAgent: Record<string, string[]> = {
+      opencode: ['run', '--auto'],
+      claude: ['-p'],
+      agy: ['run', '--auto'],
+      cline: ['run'],
+    };
+
+    setLaunchFeedback(`Starting ${cli.name}…`);
+    try {
+      const result = await window.vendraAPI?.cli?.spawnAgent({
+        agentId,
+        cliBin: cli.path || cli.bin,
+        args: argsByAgent[cli.id] ?? [],
+        cwd: workspacePath || undefined,
+        prompt: 'You are running inside VendraCode IDE. Report what you see in this workspace and wait for instructions.',
+      });
+      if (result?.success) {
+        setLaunchFeedback(`${cli.name} started (${agentId}). Its output streams into the terminal panel; use the chat panel for prompts.`);
+        const off = window.vendraAPI?.cli?.onAgentExit(({ agentId: exited }) => {
+          if (exited !== agentId) return;
+          setLaunchFeedback(`${cli.name} exited.`);
+          off?.();
+        });
+      } else {
+        setLaunchFeedback(`Failed to start ${cli.name}: ${result?.error || 'unknown error'}`);
+      }
+    } catch (err: any) {
+      setLaunchFeedback(`Failed to start ${cli.name}: ${err?.message || err}`);
+    }
+  };
 
   const handleCreateAgent = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAgentName.trim()) return;
-    
-    const colors = ['#f06595', '#4dabf7', '#38d9a9', '#ffa94d', '#b197fc'];
-    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    const name = newAgentName.trim();
+    if (!name) return;
 
     addAgentLane({
-      id: `agent-${Date.now()}`,
-      name: newAgentName.trim(),
-      model: newAgentModel,
-      provider: newAgentProvider,
+      id: `local-${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
+      name,
+      model: 'local lane (user-created)',
+      provider: 'custom',
       status: 'idle',
-      currentTask: 'Ready for new task in session',
+      currentTask: 'No task assigned yet',
       filesEditing: [],
       progress: 0,
-      branch: 'session/new-feature',
+      branch: worktrees.find((w) => w.path === workspacePath)?.branch || 'main',
       messages: [],
-      avatar: newAgentName.substring(0, 2).toUpperCase(),
-      color: randomColor,
+      avatar: name.slice(0, 2).toUpperCase(),
+      color: '#38d9a9',
     });
-    
+
     setIsCreatingAgent(false);
     setNewAgentName('');
   };
 
-  const handleLaunchCLI = async (cliBin: string, cliName: string) => {
-    const agentId = `cli-${cliBin}-${Date.now()}`;
-    addAgentLane({
-      id: agentId,
-      name: cliName,
-      model: `${cliBin} CLI Native`,
-      provider: 'custom',
-      status: 'running',
-      currentTask: `Active ${cliName} process coordinating with Brain`,
-      filesEditing: [],
-      progress: 40,
-      branch: 'main',
-      messages: [],
-      avatar: cliBin.substring(0, 2).toUpperCase(),
-      color: '#b197fc',
-    });
-
-    if (window.vendraAPI?.cli) {
-      await window.vendraAPI.cli.spawnAgent({
-        agentId,
-        cliBin,
-        cwd: workspacePath || undefined,
-      });
-    }
-  };
-
-  const repoName = workspacePath ? workspacePath.split('/').pop() : 'northlight/abyssal-drift-server';
+  const repoName = useMemo(() => {
+    if (brainRepoUrl) return brainRepoUrl.replace(/\.git$/, '').split('/').slice(-2).join('/');
+    return workspacePath ? workspacePath.split('/').pop() : 'no workspace open';
+  }, [brainRepoUrl, workspacePath]);
 
   return (
     <div className="flex-1 overflow-y-auto bg-background p-6 text-text-primary h-full select-none">
@@ -189,63 +276,49 @@ export const MissionControl: React.FC = () => {
         </div>
       )}
 
-      {/* ─── Swarm / Hive Controls Bar ─────────────────────────────── */}
+      {/* ─── Real swarm state (no simulated controls) ────────────────── */}
       <div className="mb-6 p-3 bg-bgside border border-border rounded-xl flex flex-wrap items-center justify-between gap-4 text-xs">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <div className="flex items-center gap-2 font-semibold text-text-primary">
             <Layers size={16} className="text-accent" />
-            <span>Swarm Hive</span>
+            <span>Swarm</span>
           </div>
-          <div className="flex items-center gap-1 bg-chip p-0.5 rounded-lg border border-border">
-            <button
-              type="button"
-              onClick={() => setHiveEnabled(true)}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
-                hiveEnabled ? 'bg-pop text-popfg font-semibold shadow' : 'text-text-muted hover:text-text-primary'
-              }`}
-            >
-              On
-            </button>
-            <button
-              type="button"
-              onClick={() => setHiveEnabled(false)}
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
-                !hiveEnabled ? 'bg-pop text-popfg font-semibold shadow' : 'text-text-muted hover:text-text-primary'
-              }`}
-            >
-              Off
-            </button>
-          </div>
-          <div className="flex items-center gap-1.5 ml-2">
-            <span className="text-text-muted">Agent Cap:</span>
-            <button 
-              type="button" 
-              onClick={() => setSwarmCap(Math.max(1, swarmCap - 1))}
-              className="btn btn-ghost h-6 w-6 p-0 font-bold"
-            >
-              -
-            </button>
-            <span className="font-mono font-semibold px-2">{swarmCap}</span>
-            <button 
-              type="button" 
-              onClick={() => setSwarmCap(Math.min(16, swarmCap + 1))}
-              className="btn btn-ghost h-6 w-6 p-0 font-bold"
-            >
-              +
-            </button>
-          </div>
+          <span className="flex items-center gap-1.5 text-text-secondary">
+            session <span className="font-mono text-text-primary">{brainSessionId}</span>
+          </span>
+          <span className={`flex items-center gap-1.5 ${
+            brainStatus === 'online' ? 'text-ok' : brainStatus === 'connecting' || brainStatus === 'reconnecting' ? 'text-warning' : 'text-danger'
+          }`}>
+            <Zap size={12} />
+            {brainStatus}
+          </span>
+          <span className="flex items-center gap-1.5 text-text-secondary">
+            <Users size={12} />
+            {brainPeers.length + 1} participant{brainPeers.length === 0 ? '' : 's'}
+          </span>
+          <span className="flex items-center gap-1.5 text-text-secondary">
+            <Terminal size={12} />
+            {installedCLIs.length} CLI{installedCLIs.length === 1 ? '' : 's'} installed
+          </span>
+          <span className={`flex items-center gap-1.5 ${liveEdits.length > 0 ? 'text-accent' : 'text-text-muted'}`}>
+            <Zap size={12} />
+            {liveEdits.length} live edit{liveEdits.length === 1 ? '' : 's'}
+          </span>
         </div>
 
-        {/* Local CLI Quick Launchers */}
+        {/* Local CLI launchers (real processes, real exit codes) */}
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-text-muted">Spawn Local Process:</span>
-          {localCLIs && localCLIs.filter(c => c.isInstalled).map(cli => (
+          <span className="text-[11px] text-text-muted">Launch agent:</span>
+          {installedCLIs.length === 0 && (
+            <span className="text-[11px] text-text-hint font-mono">no agent CLIs detected</span>
+          )}
+          {installedCLIs.map(cli => (
             <button
               key={cli.id}
               type="button"
-              onClick={() => handleLaunchCLI(cli.bin, cli.name)}
+              onClick={() => handleLaunchCLI(cli.id)}
               className="btn btn-ghost text-xs h-7 font-mono"
-              title={`Spawn ${cli.name} lane inside worktree`}
+              title={`Start ${cli.name} (${cli.path}) in this workspace`}
             >
               <Plus size={12} className="text-accent" />
               {cli.bin}
@@ -253,6 +326,12 @@ export const MissionControl: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {launchFeedback && (
+        <div className="mb-4 px-3 py-2 bg-bgdeep border border-border rounded-lg text-[11px] font-mono text-text-secondary">
+          {launchFeedback}
+        </div>
+      )}
 
       {/* ─── Create Custom Lane Form ─────────────────────────────────── */}
       <AnimatePresence>
@@ -275,36 +354,12 @@ export const MissionControl: React.FC = () => {
                 autoFocus
               />
             </div>
-            <div className="w-44">
-              <label className="block text-[11px] text-text-muted mb-1 font-medium">Provider</label>
-              <select 
-                value={newAgentProvider}
-                onChange={e => setNewAgentProvider(e.target.value as LLMProvider)}
-                className="vc-input"
-              >
-                <option value="anthropic">Anthropic (Claude)</option>
-                <option value="openai">OpenAI / Codex</option>
-                <option value="nvidia">NVIDIA NIM</option>
-                <option value="custom">Custom Native</option>
-              </select>
-            </div>
-            <div className="w-44">
-              <label className="block text-[11px] text-text-muted mb-1 font-medium">Model</label>
-              <input 
-                type="text" 
-                value={newAgentModel}
-                onChange={e => setNewAgentModel(e.target.value)}
-                className="vc-input"
-              />
-            </div>
-            <div className="flex gap-2">
-              <button type="submit" className="btn btn-primary h-8">
-                Add Lane
-              </button>
-              <button type="button" onClick={() => setIsCreatingAgent(false)} className="btn btn-ghost h-8">
-                Cancel
-              </button>
-            </div>
+            <button type="submit" className="btn btn-primary h-8">
+              Add Lane
+            </button>
+            <button type="button" onClick={() => setIsCreatingAgent(false)} className="btn btn-ghost h-8">
+              Cancel
+            </button>
           </motion.form>
         )}
       </AnimatePresence>
@@ -389,20 +444,11 @@ export const MissionControl: React.FC = () => {
                   )}
                 </div>
 
-                {/* Progress bar & controls */}
+                {/* Lane controls */}
                 <div className="mt-3 pt-2.5 border-t border-border/80">
-                  {agent.status === 'running' && (
-                    <div className="w-full bg-chip rounded-full h-1 mb-2.5 overflow-hidden">
-                      <div 
-                        className="bg-ok h-1 rounded-full transition-all duration-300"
-                        style={{ width: `${agent.progress}%` }}
-                      />
-                    </div>
-                  )}
-
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-text-muted font-mono">
-                      {agent.status === 'running' ? `${agent.progress}% done` : 'Standby'}
+                    <span className="text-[10px] text-text-muted font-mono" title={agent.currentTask}>
+                      {agent.currentTask}
                     </span>
 
                     <div className="flex gap-1">

@@ -69,10 +69,10 @@ export function StatusBar() {
           </span>
         )}
 
-        {/* Advisory Locks (zero-conflict guarantee) */}
-        <span className="flex items-center gap-1 text-text-hint">
+        {/* Advisory lock policy (what the IDE guarantees, not a live claim) */}
+        <span className="flex items-center gap-1 text-text-hint" title="Files edited by a teammate are locked for you before you touch them">
           <Shield size={10} />
-          Zero Conflicts
+          Locks: {lockCount > 0 ? `${lockCount} active` : 'none'}
         </span>
       </div>
 

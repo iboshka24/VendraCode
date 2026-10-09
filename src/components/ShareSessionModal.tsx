@@ -10,7 +10,7 @@ export const ShareSessionModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
-  const { workspacePath, setWorkspacePath, setFileTree, setBrainSessionId, setBrainRepoUrl } = useAppStore();
+  const { workspacePath, setWorkspacePath, setFileTree, setBrainSessionId, setBrainRepoUrl, worktrees } = useAppStore();
   const [activeTab, setActiveTab] = useState<'share' | 'join'>('share');
   const [copied, setCopied] = useState(false);
   const [githubRepoUrl, setGithubRepoUrl] = useState('https://github.com/ibrohim/VendraCode');
@@ -237,7 +237,9 @@ export const ShareSessionModal: React.FC<{
                 <Shield size={14} className="text-accent shrink-0" />
                 <div className="min-w-0">
                   <div className="text-[10px] text-text-muted font-semibold uppercase">Git Worktree Sync</div>
-                  <div className="text-[11px] font-mono text-text-primary truncate">Zero Conflicts</div>
+                  <div className="text-[11px] font-mono text-text-primary truncate">
+                    {worktrees.length || 1} worktree{(worktrees.length || 1) === 1 ? '' : 's'}
+                  </div>
                 </div>
               </div>
             </div>

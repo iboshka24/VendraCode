@@ -1,3 +1,4 @@
+import { LivePeersBadge } from './LivePeersBadge';
 import React from 'react';
 import { useAppStore } from '@/stores/appStore';
 import {
@@ -57,12 +58,9 @@ export function TitleBar() {
         </nav>
       </div>
 
-      {/* Center: Live Sync Pill */}
+      {/* Center: real multiplayer state (no simulated sync claims) */}
       <div className="hidden md:flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
-        <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-chip border border-border text-[11px] text-text-secondary">
-          <span className="dotpulse" />
-          <span className="font-mono text-[10px]">Zero Conflicts · 5s Live Sync</span>
-        </div>
+        <LivePeersBadge />
       </div>
 
       {/* Right: Actions + Avatars + Share */}

@@ -10,6 +10,50 @@ import { getLanguageFromPath } from '@/utils/providers';
 
 // ─── App Store ─────────────────────────────────────────────────────
 
+/** Session id the user last used, restored synchronously to avoid a
+ *  connect → reconnect round trip on boot. */
+const loadBrainSession = (): string => {
+  try {
+    return localStorage.getItem('vendracode-session') || 'default-session';
+  } catch {
+    return 'default-session';
+  }
+};
+
+const loadSettings = (): AppSettings => {
+  try {
+    const saved = localStorage.getItem('vendracode-settings');
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return {
+    theme: 'dark',
+    fontSize: 14,
+    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    minimap: false,
+    wordWrap: false,
+    autoSave: true,
+    providers: DEFAULT_PROVIDERS,
+    permissions: {
+      allowFileCreate: true,
+      allowFileDelete: true,
+      allowCommands: true,
+      allowGitPush: false,
+      requireApproval: true,
+    },
+  };
+};
+
+/** Resolves the provider the user last picked (survives restarts). */
+const resolveActiveProvider = (): ProviderConfig => {
+  const settings = loadSettings();
+  try {
+    const savedId = localStorage.getItem('vendracode-active-provider');
+    const saved = savedId ? settings.providers.find((p) => p.id === savedId) : undefined;
+    if (saved) return saved;
+  } catch {}
+  return settings.providers[0];
+};
+
 interface AppState {
   // View
   activeView: 'editor' | 'mission-control' | 'settings';
@@ -49,18 +93,20 @@ interface AppState {
   agentStatus: AgentStatus;
   setAgentStatus: (status: AgentStatus) => void;
 
-  // Agent Lanes (Mission Control)
+  // Agent lanes — derived from reality (detected CLIs, brain peers, live
+  // remote edits). Never seeded with invented lanes.
   agentLanes: AgentLane[];
+  setAgentLanes: (lanes: AgentLane[]) => void;
   addAgentLane: (lane: AgentLane) => void;
   updateAgentLane: (id: string, updates: Partial<AgentLane>) => void;
   removeAgentLane: (id: string) => void;
 
-  // Sessions
+  // Sessions (brain session peers + worktrees)
   sessions: Session[];
   activeSessionId: string | null;
   setActiveSession: (id: string) => void;
 
-  // Approvals
+  // Approvals (created by the agent tool approval gate)
   approvals: ApprovalRequest[];
   addApproval: (req: ApprovalRequest) => void;
   resolveApproval: (id: string, status: 'approved' | 'denied') => void;
@@ -75,6 +121,12 @@ interface AppState {
   settings: AppSettings;
   updateSettings: (updates: Partial<AppSettings>) => void;
   updateProvider: (id: string, updates: Partial<ProviderConfig>) => void;
+  /**
+   * Creates or fully replaces a provider entry. Used by the model picker to
+   * import a discovered model together with its endpoint + credentials, which
+   * `updateProvider` cannot do (it only patches ids that already exist).
+   * The upserted provider becomes active immediately and survives restarts.
+   */
   upsertProvider: (provider: ProviderConfig) => void;
 
   // Terminal
@@ -118,50 +170,6 @@ interface AppState {
   worktrees: GitWorktree[];
   setWorktrees: (worktrees: GitWorktree[]) => void;
 }
-
-const loadSettings = (): AppSettings => {
-  try {
-    const saved = localStorage.getItem('vendracode-settings');
-    if (saved) return JSON.parse(saved);
-  } catch {}
-  return {
-    theme: 'dark',
-    fontSize: 14,
-    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-    minimap: false,
-    wordWrap: false,
-    autoSave: true,
-    providers: DEFAULT_PROVIDERS,
-    permissions: {
-      allowFileCreate: true,
-      allowFileDelete: true,
-      allowCommands: true,
-      allowGitPush: false,
-      requireApproval: true,
-    },
-  };
-};
-
-/** Session id the user last used, restored synchronously to avoid a
- *  connect → reconnect round trip on boot. */
-const loadBrainSession = (): string => {
-  try {
-    return localStorage.getItem('vendracode-session') || 'default-session';
-  } catch {
-    return 'default-session';
-  }
-};
-
-/** Resolves the provider the user last picked (survives restarts). */
-const resolveActiveProvider = (): ProviderConfig => {
-  const settings = loadSettings();
-  try {
-    const savedId = localStorage.getItem('vendracode-active-provider');
-    const saved = savedId ? settings.providers.find((p) => p.id === savedId) : undefined;
-    if (saved) return saved;
-  } catch {}
-  return settings.providers[0];
-};
 
 export const useAppStore = create<AppState>((set, get) => ({
   // View
@@ -249,65 +257,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   agentStatus: 'idle',
   setAgentStatus: (status) => set({ agentStatus: status }),
 
-  // Agent Lanes (Amoeba Multiplayer Swarm)
-  agentLanes: [
-    {
-      id: 'alice-lane',
-      name: 'Alice',
-      model: 'Claude 3.7 Sonnet (Local CLI)',
-      provider: 'anthropic',
-      status: 'running',
-      currentTask: 'refactor the token refresh in src/auth (turn 18 · rev 41)',
-      filesEditing: ['src/auth/token.ts', 'src/net/session_store.ts'],
-      progress: 68,
-      branch: 'session/lobby-join-race',
-      messages: [],
-      avatar: 'AN',
-      color: '#f06595',
-    },
-    {
-      id: 'chen-lane',
-      name: 'Chen',
-      model: 'Codex / GPT-4o (Local CLI)',
-      provider: 'openai',
-      status: 'running',
-      currentTask: 'Rewrite the tick scheduler in session/tick-scheduler',
-      filesEditing: ['src/cart/totals.ts'],
-      progress: 42,
-      branch: 'session/tick-scheduler',
-      messages: [],
-      avatar: 'CI',
-      color: '#38d9a9',
-    },
-    {
-      id: 'bob-lane',
-      name: 'Bob',
-      model: 'Claude Code (Local CLI)',
-      provider: 'anthropic',
-      status: 'waiting',
-      currentTask: 'Inventory dupe on shard handoff · waiting for checkpoint',
-      filesEditing: ['src/lobby/join.ts'],
-      progress: 85,
-      branch: 'session/inventory-dupe',
-      messages: [],
-      avatar: 'BF',
-      color: '#4dabf7',
-    },
-    {
-      id: 'user-lane',
-      name: 'You (Local)',
-      model: 'Vendra AI / Hermes Native',
-      provider: 'custom',
-      status: 'idle',
-      currentTask: 'Ready in main workspace',
-      filesEditing: [],
-      progress: 0,
-      branch: 'main',
-      messages: [],
-      avatar: 'IB',
-      color: '#7c3aed',
-    },
-  ],
+  // Agent lanes — real data only
+  agentLanes: [],
+  setAgentLanes: (lanes) => set({ agentLanes: lanes }),
   addAgentLane: (lane) => set((s) => ({ agentLanes: [...s.agentLanes, lane] })),
   updateAgentLane: (id, updates) =>
     set((s) => ({
@@ -315,48 +267,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
   removeAgentLane: (id) => set((s) => ({ agentLanes: s.agentLanes.filter((l) => l.id !== id) })),
 
-  // Sessions
-  sessions: [
-    {
-      id: 'sess-1',
-      name: 'Fix the lobby join race',
-      branch: 'session/lobby-join-race',
-      agents: [],
-      status: 'active',
-      owner: { id: 'alice', name: 'Alice', initials: 'AN', color: '#f06595', isOnline: true },
-      createdAt: Date.now() - 3600000,
-    },
-    {
-      id: 'sess-2',
-      name: 'Rewrite the tick scheduler',
-      branch: 'session/tick-scheduler',
-      agents: [],
-      status: 'active',
-      owner: { id: 'chen', name: 'Chen', initials: 'CI', color: '#38d9a9', isOnline: true },
-      createdAt: Date.now() - 7200000,
-    },
-  ],
-  activeSessionId: 'sess-1',
+  // Sessions — populated from the brain session (peers + worktrees)
+  sessions: [],
+  activeSessionId: null,
   setActiveSession: (id) => set({ activeSessionId: id }),
 
-  // Approvals
-  approvals: [
-    {
-      id: 'appr-alice-1',
-      agentId: 'alice-lane',
-      agentName: 'Alice (Claude Code)',
-      action: 'git_push',
-      description: 'Run this? rev 18: git push origin session/lobby-join-race',
-      details: JSON.stringify({
-        lane: 'session/lobby-join-race',
-        files: ['src/auth/token.ts', 'src/net/session_store.ts'],
-        network: 'origin (git)',
-        action: 'commit & push'
-      }, null, 2),
-      timestamp: Date.now() - 120000,
-      status: 'pending',
-    }
-  ],
+  // Approvals — real requests only
+  approvals: [],
   addApproval: (req) => set((s) => ({ approvals: [...s.approvals, req] })),
   resolveApproval: (id, status) =>
     set((s) => ({
@@ -390,12 +307,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { settings: newSettings, activeProvider };
     });
   },
-  /**
-   * Creates or fully replaces a provider entry. Used by the model picker to
-   * import a discovered model together with its endpoint + credentials, which
-   * `updateProvider` cannot do (it only patches ids that already exist).
-   * The upserted provider becomes active immediately and survives restarts.
-   */
   upsertProvider: (provider) => {
     set((s) => {
       const exists = s.settings.providers.some((p) => p.id === provider.id);
@@ -471,4 +382,3 @@ export const useAppStore = create<AppState>((set, get) => ({
   worktrees: [],
   setWorktrees: (worktrees) => set({ worktrees }),
 }));
-
