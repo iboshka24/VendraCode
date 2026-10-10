@@ -51,6 +51,17 @@ export interface BrainIdentity {
   color: string;
 }
 
+/**
+ * Broadcast attribution override — lets diffs/locks/actions be published on
+ * behalf of a local agent ("OpenCode CLI") instead of the human's identity,
+ * so teammates see WHO is touching the file.
+ */
+export interface BroadcastAgent {
+  id: string;
+  name: string;
+  color?: string;
+}
+
 function hashString(value: string): number {
   let hash = 0;
   for (let i = 0; i < value.length; i++) {
@@ -191,7 +202,7 @@ export class BrainClient {
   }
 
   /** Broadcasts Monaco content changes to every peer in the session. */
-  sendDiff(filePath: string, changes: RemoteDiffChange[]): void {
+  sendDiff(filePath: string, changes: RemoteDiffChange[], agent?: BroadcastAgent): void {
     const normalized = changes
       .filter((change) => change && (change.text.length > 0 || change.rangeLength > 0))
       .map((change) => ({
@@ -201,13 +212,30 @@ export class BrainClient {
       }));
     if (normalized.length === 0) return;
 
+    const who = agent || { id: this.identity.peerId, name: this.identity.peerName, color: this.identity.color };
     this.send({
       type: 'diff:broadcast',
-      agentId: this.identity.peerId,
-      agentName: this.identity.peerName,
-      color: this.identity.color,
+      agentId: who.id,
+      agentName: who.name,
+      color: who.color || this.identity.color,
       filePath,
       changes: normalized,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Reports one agent action (tool call, file write, …) so teammates see what
+   * local agents are doing in their Mission Control feed.
+   */
+  sendAction(action: { tool: string; status?: string; file?: string }, agent?: BroadcastAgent): void {
+    const who = agent || { id: this.identity.peerId, name: this.identity.peerName, color: this.identity.color };
+    this.send({
+      type: 'action:broadcast',
+      agentId: who.id,
+      agentName: who.name,
+      color: who.color || this.identity.color,
+      action,
       timestamp: Date.now(),
     });
   }
@@ -226,13 +254,14 @@ export class BrainClient {
   }
 
   /** Acquires an advisory lock so teammates see the file as "in use". */
-  acquireLock(filePath: string): void {
+  acquireLock(filePath: string, agent?: BroadcastAgent): void {
     this.heldLocks.add(filePath);
+    const who = agent || { id: this.identity.peerId, name: this.identity.peerName };
     this.send({
       type: 'lock:acquire',
       filePath,
-      agentId: this.identity.peerId,
-      agentName: this.identity.peerName,
+      agentId: who.id,
+      agentName: who.name,
     });
   }
 
@@ -321,6 +350,24 @@ export class BrainClient {
         // Legacy word-level stream: synthesize a diff so the editor UI is uniform.
         const diff = this.toDiff(data);
         if (diff) this.emit({ type: 'diff', diff });
+        break;
+      }
+
+      case 'action:stream': {
+        const raw = data.action && typeof data.action === 'object' ? data.action : {};
+        if (typeof raw.tool !== 'string' || !raw.tool) break;
+        this.emit({
+          type: 'action',
+          action: {
+            id: `${data.agentId || 'agent'}-${Number(data.timestamp) || Date.now()}`,
+            agentId: typeof data.agentId === 'string' ? data.agentId : 'agent',
+            agentName: typeof data.agentName === 'string' ? data.agentName : 'Agent',
+            action: raw.tool,
+            targetFile: typeof raw.file === 'string' ? raw.file : undefined,
+            summary: `${raw.tool}${raw.status ? ` (${raw.status})` : ''}${raw.file ? ` · ${raw.file}` : ''}`,
+            timestamp: Number(data.timestamp) || Date.now(),
+          },
+        });
         break;
       }
 

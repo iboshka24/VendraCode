@@ -7,7 +7,7 @@ import { TerminalPanel } from '@/components/Terminal';
 import { SearchModal } from '@/components/SearchModal';
 import { ShareSessionModal } from '@/components/ShareSessionModal';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 
 // Lazy-load heavier panels
 const FileExplorer = lazy(() => import('@/components/FileExplorer').then(m => ({ default: m.FileExplorer })));
@@ -43,14 +43,48 @@ function App() {
     toggleSearch,
     setBrainSessionId,
     setBrainRepoUrl,
+    setBotStatus,
   } = useAppStore();
 
   // True while the user drags the agent panel's edge (disables the width
   // animation so the drag tracks the cursor 1:1).
   const [isResizingChat, setIsResizingChat] = useState(false);
 
+  /** Throttles watcher-driven live-write reveals (unparsed agent tools). */
+  const lastWatchRevealRef = useRef(0);
+
   // Cloudflare Edge Brain multiplayer sync (brain.vendra.uz/ws)
   useBrainSync();
+
+  // Messenger bots: subscribe to runtime status + incoming messages, and
+  // auto-start every enabled bot on launch (config lives in localStorage).
+  useEffect(() => {
+    if (!window.vendraAPI?.bots) return;
+    const offStatus = window.vendraAPI.bots.onStatus((s) => {
+      setBotStatus(s.id, s);
+      // Remember the claimed chat across restarts.
+      const bot = useAppStore.getState().bots.find((b) => b.id === s.id);
+      if (bot && (bot.pairedChatId || null) !== (s.pairedChatId || null)) {
+        useAppStore.getState().upsertBot({ ...bot, pairedChatId: s.pairedChatId || null });
+      }
+    });
+    const offIncoming = window.vendraAPI.bots.onIncoming((msg) => {
+      const bot = useAppStore.getState().bots.find((b) => b.id === msg.botId);
+      window.dispatchEvent(new CustomEvent('vendracode:bot-incoming', {
+        detail: { ...msg, agentId: bot?.agentId || 'vendra-ai' },
+      }));
+    });
+    window.vendraAPI.bots.status()
+      .then((map) => Object.entries(map || {}).forEach(([id, s]) => setBotStatus(id, s)))
+      .catch(() => {});
+    for (const bot of useAppStore.getState().bots) {
+      if (bot.enabled && bot.token) {
+        window.vendraAPI.bots.start({ id: bot.id, token: bot.token, pairedChatId: bot.pairedChatId })
+          .catch(() => {});
+      }
+    }
+    return () => { offStatus(); offIncoming(); };
+  }, [setBotStatus]);
 
   // Auto-load last workspace or default workspace on start so Explorer isn't blank
   useEffect(() => {
@@ -136,6 +170,34 @@ function App() {
         const entries = await window.vendraAPI.fs.readDir(workspacePath);
         setFileTree(entries);
       } catch {}
+
+      // Fallback for writes the tool parser can't see (bash heredocs, patch
+      // tools, …): while an agent is running, reveal qualifying file changes
+      // in the editor as a live write, exactly like parsed `write` calls.
+      try {
+        const state = useAppStore.getState();
+        if (!state.activeAgentLabel || state.liveWrite || !filename || !workspacePath) return;
+        const now = Date.now();
+        if (now - lastWatchRevealRef.current < 2500) return;
+        const rel = String(filename).replace(/\\/g, '/');
+        if (/(^|\/)(\.git|node_modules|dist|build|release|\.cache|coverage)(\/|$)/.test(rel)) return;
+        if (!/\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|c|h|cpp|cs|md|json|ya?ml|toml|css|scss|html|sh|sql|txt)$/i.test(rel)) return;
+        const abs = `${workspacePath.replace(/[\\/]+$/, '')}/${rel}`;
+        const content = await window.vendraAPI.fs.readFile(abs);
+        if (typeof content !== 'string' || content.length === 0 || content.length > 512 * 1024) return;
+        // The editor already animating this file? Then this is its own landing.
+        if (useAppStore.getState().liveWrite?.path === abs) return;
+        lastWatchRevealRef.current = now;
+        state.startLiveWrite({
+          agentId: 'agent-filewatch',
+          agentName: state.activeAgentLabel,
+          color: '#ffa94d',
+          path: abs,
+          fileName: rel.split('/').pop() || rel,
+          kind: 'write',
+          content,
+        });
+      } catch { /* reveal is best-effort */ }
     });
 
     return () => {

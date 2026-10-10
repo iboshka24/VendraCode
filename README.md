@@ -28,6 +28,10 @@ VendraCode is an open-source, multiplayer AI-native development environment (IDE
 - 🤖 **Local Agent CLIs Support** — Real child processes for **OpenCode**, **Claude Code**, **Cline**, **Antigravity CLI**: version-verified detection, streamed stdout/stderr into chat, real exit codes, Stop button, no hardcoded paths. Every tool call the agent makes gets its **own message** (name + live status); free OpenCode Zen models work out of the box
 - ↔️ **Resizable Agent Panel** — Drag the panel's left edge (double-click resets) or hit the expand button to widen the chat; the width persists across restarts
 - 👀 **Watch the Agent Write** — When an agent creates or edits a file, the file opens in the editor and the code streams in live, with the changed lines highlighted and a `⌁ <agent> · live edit` badge — you see the code being written, not just a "done" message
+- 🤝 **Teammates See Your Agents** — Agent tool calls, file locks and live edits are broadcast to the brain attributed to the agent ("OpenCode CLI → src/app.ts"), so everyone knows which agent is touching what, right in their own editor and Mission Control
+- 📨 **Messenger Bots (Hermes-style gateway)** — Bind a Telegram bot to any agent: messages sent to the bot run that agent in the IDE (you watch it live) and the answer is posted back to Telegram; first chat wins the pairing
+- 💬 **Markdown Chat + Slash Commands** — Agent answers render as real markdown (lists, code blocks, tables); `/help`, `/yolo` (skip approval prompts), `/models`, `/new`, `/clear`, `/stop` work with every agent
+- 🧠 **Thinking / Reasoning Effort** — Pick the reasoning effort per run: CLI agents get the model variant (`--model …#high`), the native agent sends `reasoning` / `reasoning_effort` where the provider supports it
 - ⚠️ **Overlap Warnings & Advisory Locks** — Surfaces potential work duplication or file conflicts between running agents before conflicts occur
 - ⚡ **Built-in AI Coding Agent** — OpenCode-style tool-calling loop that creates, edits, and deletes files, executes terminal commands, and searches code
 - 🔌 **Multi-Provider LLM Support** — Works with OpenAI, Anthropic, NVIDIA NIM, and any OpenAI-compatible API
@@ -96,24 +100,26 @@ npm run build:all
 
 ### App verification (real UI, real brain)
 
-Three CDP-driven suites boot the packaged app in Electron and click through it:
+Six suites, all self-contained (each boots its own Electron instances):
 
 ```bash
-npm run test:app           # 30 checks: explorer, editor, search, worktrees,
-                           # terminal, model scan, multi-chat, Mission Control,
-                           # Settings, hotkeys + a fake-content guard on the DOM
-npm run test:multiplayer   # 12 checks: two real IDE instances with different
-                           # workspace roots sharing one brain session
-npm run test:zen           # 8 checks: pick a free OpenCode Zen model from the
-                           # scanner, verify the chat routes through
-                           # `opencode run --model …`, and a real answer lands
-                           # in a persisted chat after an app reload
-npm test                   # all three
+npm run test:unit              # 16 checks: Windows-aware CLI locator (mocked platform)
+npm run test:app               # 33 checks: explorer, editor, search, worktrees,
+                               # terminal, model scan, multi-chat, Mission Control,
+                               # Settings, hotkeys, markdown/slash/thinking, fake-content guard
+npm run test:multiplayer       # 12 checks: two IDE instances sharing one brain session
+npm run test:multiplayer-agent # 9 checks: teammate sees a local agent's lock, live-edit
+                               # badge and tool calls (agent-attributed broadcasts)
+npm run test:zen               # 8 checks: pick a free OpenCode Zen model, chat routes through
+                               # `opencode run --model …`, real answer lands in a persisted chat
+npm run test:agent             # 11 checks: Telegram bot bound to an agent (local Bot API stub),
+                               # live file write measured frame by frame, reply back to the bot
+npm test                       # all six
 ```
 
-They exercise the built `dist/`, so run `npm run build` first. Each suite boots
-its own Electron instance on its own user-data dir; none of them need a manual
-app start (set `CDP_PORT` to point `test:zen` at a running instance instead).
+They exercise the built `dist/`, so run `npm run build` first. `test:zen`/`test:agent`
+use the real CLI unless `VENDRA_CLI_PATH` points at `tests/fixtures` (the agent
+suites do this automatically with a deterministic fake `opencode`).
 
 ### Windows one-command build
 

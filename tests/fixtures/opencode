@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Minimal deterministic stand-in for the OpenCode CLI used by the test suites.
+#
+# Behaves like `opencode` for the two calls VendraCode makes:
+#   --version        → a version string (CLI detection)
+#   run …            → NDJSON events: one real `write` tool call (the file is
+#                      actually written to the cwd) followed by a text answer.
+#
+# Env knobs: FAKE_OPENCODE_TEXT (answer, default PONG),
+#            FAKE_OPENCODE_FILE (file to write, default fake-write.js),
+#            FAKE_OPENCODE_LINES (comment lines, default 120).
+set -euo pipefail
+
+if [ "${1:-}" = "--version" ]; then
+  echo "fake-opencode 1.0.0"
+  exit 0
+fi
+
+FAKE_OPENCODE_TEXT="${FAKE_OPENCODE_TEXT:-PONG}" \
+FAKE_OPENCODE_FILE="${FAKE_OPENCODE_FILE:-fake-write.js}" \
+FAKE_OPENCODE_LINES="${FAKE_OPENCODE_LINES:-120}" \
+python3 - << 'PY'
+import json, os, time
+
+text = os.environ["FAKE_OPENCODE_TEXT"]
+fname = os.environ["FAKE_OPENCODE_FILE"]
+lines = int(os.environ["FAKE_OPENCODE_LINES"])
+
+session = "ses_fake_test"
+content_lines = ["function mul(a, b) {", "  return a * b;", "}", "export { mul };", ""]
+content_lines += [
+    f"// fake line {i}: deterministic comment written by the test agent"
+    for i in range(1, lines + 1)
+]
+content = "\n".join(content_lines) + "\n"
+abs_path = os.path.join(os.getcwd(), fname)
+with open(abs_path, "w", encoding="utf-8") as fh:
+    fh.write(content)
+
+time.sleep(0.35)
+print(json.dumps({
+    "type": "tool_use", "timestamp": 1, "sessionID": session,
+    "part": {
+        "id": "call-fake-write-1", "type": "tool", "tool": "write",
+        "state": {"status": "completed", "input": {"path": abs_path, "content": content}},
+    },
+}), flush=True)
+
+time.sleep(0.35)
+print(json.dumps({
+    "type": "text", "timestamp": 2, "sessionID": session,
+    "part": {"type": "text", "text": text},
+}), flush=True)
+PY
+exit 0

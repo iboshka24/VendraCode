@@ -366,7 +366,40 @@ const ctrlO = await c.evaluate(`(() => {
 })()`);
 check('Ctrl+O is handled without breaking the app', ctrlO.alive);
 
-console.log('\n[13] Final renderer health');
+console.log('\n[13] Chat: slash commands, markdown, thinking');
+const chatChecks = await c.evaluate(`(async () => {
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const ta = document.querySelector('textarea[placeholder^="Ask "], textarea[placeholder*="Ask "]');
+  if (!ta) return { error: 'no chat textarea' };
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  const send = async (text) => {
+    ta.focus();
+    setter.call(ta, text);
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(80);
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+  };
+  await send('/help');
+  await sleep(900);
+  const stream = document.querySelector('div.flex-1.overflow-y-auto.p-3') || document.body;
+  const html = stream.innerHTML;
+  const text = stream.innerText;
+  const slashListRendered = /<ul/.test(html) && /<li/.test(html);
+  const helpNote = /Slash commands/i.test(text) && /\\/yolo/.test(text);
+  const noRawBold = !/\\*\\*Slash commands\\*\\*/.test(text);
+  // thinking pill exists and opens
+  const thinkBtn = [...document.querySelectorAll('button')].find(b => /Reasoning effort/i.test(b.title || ''));
+  thinkBtn?.click();
+  await sleep(400);
+  const hasLevels = /high/i.test(document.body.innerText) && /xhigh/i.test(document.body.innerText);
+  document.body.click();
+  return { slashListRendered, helpNote, noRawBold, thinkBtn: !!thinkBtn, hasLevels };
+})()`);
+check('slash command /help отвечает заметкой', chatChecks.helpNote, JSON.stringify(chatChecks));
+check('markdown рендерится списком, без сырых **', chatChecks.slashListRendered && chatChecks.noRawBold, JSON.stringify(chatChecks));
+check('селектор thinking/effort есть и раскрывается', chatChecks.thinkBtn && chatChecks.hasLevels, JSON.stringify(chatChecks));
+
+console.log('\n[14] Final renderer health');
 check('renderer stayed error-free through the whole walkthrough', rendererErrors.length === 0, rendererErrors.slice(0, 3).join(' | '));
 await c.screenshot(join(OUT, 'editor.png'));
 

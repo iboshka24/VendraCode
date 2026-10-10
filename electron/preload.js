@@ -78,6 +78,24 @@ contextBridge.exposeInMainWorld('vendraAPI', {
     },
   },
 
+  // Messenger bots (Telegram gateway bound to an agent)
+  bots: {
+    start: (opts) => ipcRenderer.invoke('bot:start', opts),
+    stop: (opts) => ipcRenderer.invoke('bot:stop', opts),
+    send: (opts) => ipcRenderer.invoke('bot:send', opts),
+    status: () => ipcRenderer.invoke('bot:status'),
+    onIncoming: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('bot:incoming', handler);
+      return () => ipcRenderer.removeListener('bot:incoming', handler);
+    },
+    onStatus: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('bot:status', handler);
+      return () => ipcRenderer.removeListener('bot:status', handler);
+    },
+  },
+
   // The Brain (Coordination & Overlap Detection)
   brain: {
     acquireLock: (opts) => ipcRenderer.invoke('brain:acquireLock', opts),

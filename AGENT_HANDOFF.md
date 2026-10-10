@@ -623,6 +623,75 @@ Monaco сжимался 166→61→60px (контент прибывал), фа�
 
 ---
 
+### 5.9. Windows-детекция CLI, видимость агентов у коллег, markdown, слэш-команды, thinking, Telegram-боты (v1.1.4) ✅
+
+**Windows: OpenCode не находился** — детектор знал только unix-пути, а `which`
+на Windows нет, плюс npm-шимы `opencode.cmd` нельзя запустить без `cmd.exe`.
+Что сделано (`electron/main.js`):
+
+| Узел | Решение |
+|---|---|
+| Поиск в PATH | `where` на Windows / `which` на unix, первый результат |
+| Папки установки | Windows: `~\.opencode\bin`, `%LOCALAPPDATA%\opencode\bin`, `%APPDATA%\npm` (npm -g), `~\.bun\bin`, scoop shims, chocolatey |
+| Расширения | перебор по `PATHEXT` (`.exe`, `.cmd`, …) |
+| Запуск | `spawnCli()`: для `.cmd`/`.bat` → `cmd.exe /d /s /c` с кросс-спавн-квотингом (`quoteForCmd`) и `windowsVerbatimArguments` |
+| Версии/пробы | `runCliCapture()` (замена execFile, stdin закрыт) |
+| Переопределение | `VENDRA_CLI_PATH=<dir>` — папка, которая ищется первой (пиннинг билда CLI и тестовые фикстуры) |
+
+Юнит-тест `tests/cli-locate.test.mjs` (16 проверок) гоняет Windows-ветки на
+любой ОС через мок платформы/окружения.
+
+**Агенты теперь видны коллегам** (это был реальный разрыв: обработчики
+`brain:*` в main только шли в окно, в сеть ничего не уходило):
+
+- `brainClient.sendDiff(..., agent)` / `acquireLock(..., agent)` получили
+  атрибуцию: коллеги видят «OpenCode CLI → fake-write.js», а не имя человека.
+- Новый протокол `action:broadcast` → `action:stream` в воркере: tool-вызовы
+  агента попадают в Mission Control коллег (`useBrainSync` → `addBrainAction`).
+- AIChat шлёт action на каждый tool, diff+lock — на write/edit
+  (edit-строка вычисляется из файла на диске), локается до конца прогона.
+- Воркер задеплоен (`wrangler deploy`, Version `51f001f5…`).
+
+Проверка: `tests/multiplayer-agent-verify.mjs` — A с ботом пишет файл, B
+видит `1 locked` с подписью «OpenCode CLI → fake-write.js», бейдж
+`⌁ OpenCode CLI · live edit` в своём редакторе и `write` в Mission Control → **9/9**.
+
+**Живое написание кода — почему «не видно»**: CLI-агенты анимировались с v1.1.3,
+а нативный Vendra AI — нет (`create_file` писал без анимации; вероятно, это и
+наблюдалось). Плюс добавлен watcher-фолбэк: если во время агента файл меняется
+инструментом, который парсер не разобрал (bash-heredoc и т.п.), редактор всё
+равно открывает его и раскрывает. Проверено детерминированно:
+`tests/agent-e2e.mjs` измеряет раскрытие по DOM — **1 строка → 26 строк за
+450 мс**, диск содержит те же 126 строк, бейдж на месте.
+
+**Markdown в чате**: `react-markdown` + `remark-gfm`, компонент
+`MarkdownMessage` (списки, код-блоки, таблицы, ссылки, цитаты) для ответов,
+seed-карточки и системных заметок. Сырые `**` и бэктики больше не видны.
+
+**Слэш-команды** (работают с любым агентом, локально, без похода в модель):
+`/help`, `/yolo` (тумблер YOLO — нативный агент не спрашивает подтверждений;
+персист в `vendracode-yolo`), `/models`, `/new`, `/clear`, `/stop`. Плюс
+автодополнение над полем ввода.
+
+**Thinking / effort**: пилюля в шапке чата (`default|none|minimal|low|medium|high|xhigh|max`,
+персист). CLI: `--model provider/model#variant` (неподдерживаемый вариант даёт
+честную ошибку CLI в чате). Нативный: `reasoning: {effort}` для OpenRouter,
+`reasoning_effort` для OpenAI, остальные API не трогаются.
+
+**Telegram-боты (Hermes-style gateway)**: `bot:start/stop/send/status` в main —
+long-poll `getUpdates`, `getMe`-валидация, парность «первый чат забирает бота»
+(`allow_all_users: false` как в Hermes), чанкование ответов по 4000 символов.
+Сообщение уходит в чат (видно живьём, включая tool-вызовы), ответ агента
+возвращается в Telegram (`toTelegramText`). Настройка — Settings → Messenger
+Bots (токен + агент, старт/стоп, статус/@username, парный чат). База API
+переопределяется `VENDRA_TELEGRAM_API` (self-hosted Bot API + тесты).
+Проверка: `tests/agent-e2e.mjs` с локальным стабом Bot API и фейковым
+`opencode` → **11/11** (включая реальный ответ PONG в «Телеграм»).
+
+**Итого сьюты**: 16 + 33 + 12 + 9 + 8 + 11 = **89 проверок**, все зелёные.
+
+---
+
 ## 6. 💡 BACKLOG ДЛЯ СЛЕДУЮЩЕГО АГЕНТА
 
 1. **Хранилище памяти Brain (RAG / Embeddings)** — подключить Cloudflare Vectorize или Upstash Vector в `worker.js`, чтобы сессии выживали между перезапусками агентов.

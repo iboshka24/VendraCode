@@ -46,6 +46,14 @@ export interface VendraAPI {
     onAgentOutput: (callback: (data: { agentId: string; type: 'stdout' | 'stderr'; text: string }) => void) => () => void;
     onAgentExit: (callback: (data: { agentId: string; code: number }) => void) => () => void;
   };
+  bots: {
+    start: (opts: { id: string; token: string; pairedChatId?: string | null }) => Promise<{ ok: boolean; username?: string; error?: string }>;
+    stop: (opts: { id: string }) => Promise<{ ok: boolean }>;
+    send: (opts: { id: string; chatId: string; text: string }) => Promise<{ ok: boolean; error?: string }>;
+    status: () => Promise<Record<string, BotRuntimeStatus>>;
+    onIncoming: (callback: (msg: { botId: string; chatId: string; from: string; text: string }) => void) => () => void;
+    onStatus: (callback: (status: BotRuntimeStatus & { id: string }) => void) => () => void;
+  };
   brain: {
     acquireLock: (opts: { filePath: string; agentId: string; agentName: string }) => Promise<{ success: boolean; conflict?: boolean; lockedBy?: BrainLock; warning?: string }>;
     releaseLock: (opts: { filePath: string; agentId: string }) => Promise<{ success: boolean }>;
@@ -113,6 +121,25 @@ export interface BrainAction {
   timestamp: number;
 }
 
+/** Runtime status of a bound messenger bot (reported by the main process). */
+export interface BotRuntimeStatus {
+  status: 'stopped' | 'connecting' | 'running' | 'error';
+  username?: string | null;
+  error?: string | null;
+  pairedChatId?: string | null;
+}
+
+/** A messenger bot bound to an agent (persisted in the renderer). */
+export interface BotConfig {
+  id: string;
+  label: string;
+  token: string;
+  /** Chat agent id it drives (vendra-ai / opencode / claude / …). */
+  agentId: string;
+  enabled: boolean;
+  pairedChatId?: string | null;
+}
+
 // ─── Cloudflare Brain (Multiplayer Live Diff) Types ─────────────────
 
 /** Connection state of the renderer's WebSocket to brain.vendra.uz/ws */
@@ -152,7 +179,8 @@ export type BrainEvent =
   | { type: 'peers'; peers: string[] }
   | { type: 'repo'; repoUrl: string }
   | { type: 'locks'; locks: Record<string, BrainLock> }
-  | { type: 'diff'; diff: RemoteDiff };
+  | { type: 'diff'; diff: RemoteDiff }
+  | { type: 'action'; action: BrainAction };
 
 declare global {
   interface Window {
@@ -349,7 +377,7 @@ export interface GitWorktree {
 
 // ─── Settings Types ────────────────────────────────────────────────
 
-export type SettingsTab = 'general' | 'editor' | 'providers' | 'permissions' | 'sessions' | 'team';
+export type SettingsTab = 'general' | 'editor' | 'providers' | 'permissions' | 'sessions' | 'team' | 'bots';
 
 export interface AppSettings {
   theme: 'dark' | 'light';

@@ -165,23 +165,39 @@ export function opencodeRunArgs(options: {
 
 /**
  * Model id to hand to `opencode run --model`, or undefined to use the CLI's
- * configured default.
+ * configured default. `effort` becomes OpenCode's model variant (`#high`).
  */
-export function opencodeModelOverride(provider?: { baseUrl?: string; model?: string; cliModel?: boolean }): string | undefined {
+export function opencodeModelOverride(
+  provider?: { baseUrl?: string; model?: string; cliModel?: boolean },
+  effort?: string
+): string | undefined {
   if (!provider?.model) return undefined;
+  const variant = effort && effort !== 'default' ? `#${effort}` : '';
 
   // CLI-routed providers (OpenCode Zen free models, and every other provider
   // OpenCode is logged into): the id is already `provider/model` shaped and the
   // CLI owns the credentials, so pass it straight through.
-  if (provider.cliModel) return provider.model;
+  if (provider.cliModel) return `${provider.model}${variant}`;
 
   if (!provider.baseUrl) return undefined;
   // Only OpenRouter-hosted providers map cleanly onto opencode's own --model.
   if (!/openrouter\.ai/i.test(provider.baseUrl)) return undefined;
-  return `openrouter/${provider.model}`;
+  return `openrouter/${provider.model}${variant}`;
 }
 
 export const CHAT_TITLE_MAX = 48;
+
+/** Markdown → plain text for messengers (Telegram, no parse_mode). */
+export function toTelegramText(md: string): string {
+  return String(md || '')
+    .replace(/```[a-zA-Z0-9-]*\n?/g, '')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(^|\s)\*([^*\n]+)\*/g, '$1$2')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
+    .trim() || '(no answer)';
+}
 
 /** Derives a chat title from the first user message. */
 export function deriveChatTitle(text: string): string {

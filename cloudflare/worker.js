@@ -196,6 +196,27 @@ export class SessionCoordinator {
         break;
       }
 
+      case 'action:broadcast': {
+        // Local agent activity (tool calls, file writes) relayed so every
+        // teammate's Mission Control shows which agent is doing what.
+        const action = data.action && typeof data.action === 'object' ? data.action : null;
+        if (action && typeof action.tool === 'string') {
+          this.broadcast({
+            type: 'action:stream',
+            agentId: data.agentId || peerId,
+            agentName: data.agentName || peerName,
+            color: data.color || '#38d9a9',
+            action: {
+              tool: action.tool,
+              status: typeof action.status === 'string' ? action.status : undefined,
+              file: typeof action.file === 'string' ? action.file : undefined,
+            },
+            timestamp: data.timestamp || Date.now(),
+          }, peerId);
+        }
+        break;
+      }
+
       case 'lock:acquire': {
         if (data.filePath) {
           this.locks[data.filePath] = {

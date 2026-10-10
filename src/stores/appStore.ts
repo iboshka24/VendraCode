@@ -3,7 +3,7 @@ import type {
   FileEntry, EditorTab, ChatMessage, AgentLane, Session, ApprovalRequest,
   ProviderConfig, AppSettings, GitStatus, AgentStatus, SettingsTab,
   BrainConnectionStatus, RemoteDiff, GitWorktree, ChatSession,
-  BrainLock, BrainAction, LocalCLIDetected
+  BrainLock, BrainAction, LocalCLIDetected, BotConfig, BotRuntimeStatus
 } from '@/types';
 import { DEFAULT_PROVIDERS } from '@/utils/providers';
 import { getLanguageFromPath } from '@/utils/providers';
@@ -85,6 +85,9 @@ const resolveActiveProvider = (): ProviderConfig => {
   return settings.providers[0];
 };
 
+/** Reasoning effort levels offered for agents (model variant / native param). */
+export type ThinkingEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 /** A file mutation an agent is performing, mirrored into the editor live. */
 export interface LiveWrite {
   /** Stable id for decorations (must not equal the local brain peer id). */
@@ -130,6 +133,16 @@ interface AppState {
   liveWrite: (LiveWrite & { startedAt: number }) | null;
   startLiveWrite: (write: LiveWrite) => void;
   endLiveWrite: () => void;
+  /** Name of the agent currently running (empty when idle) — lets the file
+   *  watcher attribute unparsed writes to it. */
+  activeAgentLabel: string;
+  setActiveAgentLabel: (label: string) => void;
+  /** YOLO mode: the native agent runs tool calls without approval prompts. */
+  yoloMode: boolean;
+  setYoloMode: (on: boolean) => void;
+  /** Reasoning effort for agents: CLI model variant / native reasoning param. */
+  thinkingEffort: ThinkingEffort;
+  setThinkingEffort: (effort: ThinkingEffort) => void;
 
   // AI Chat (persisted sessions)
   chatSessions: ChatSession[];
@@ -214,6 +227,13 @@ interface AppState {
   setActiveLocks: (locks: Record<string, BrainLock>) => void;
   brainActions: BrainAction[];
   addBrainAction: (action: BrainAction) => void;
+
+  // Messenger bots (Telegram gateway bound to an agent)
+  bots: BotConfig[];
+  upsertBot: (bot: BotConfig) => void;
+  removeBot: (id: string) => void;
+  botStatuses: Record<string, BotRuntimeStatus>;
+  setBotStatus: (id: string, status: BotRuntimeStatus) => void;
 
   // Cloudflare Edge Brain (multiplayer live diffs)
   brainSessionId: string;
@@ -310,6 +330,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeView: 'editor',
     }),
   endLiveWrite: () => set({ liveWrite: null }),
+  activeAgentLabel: '',
+  setActiveAgentLabel: (label) => set({ activeAgentLabel: label }),
+  yoloMode: (() => {
+    try { return localStorage.getItem('vendracode-yolo') === '1'; } catch { return false; }
+  })(),
+  setYoloMode: (on) => {
+    try { localStorage.setItem('vendracode-yolo', on ? '1' : '0'); } catch { /* ignore */ }
+    set({ yoloMode: on });
+  },
+  thinkingEffort: (() => {
+    const allowed: ThinkingEffort[] = ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+    try {
+      const saved = localStorage.getItem('vendracode-thinking') as ThinkingEffort | null;
+      if (saved && allowed.includes(saved)) return saved;
+    } catch { /* ignore */ }
+    return 'default';
+  })(),
+  setThinkingEffort: (effort) => {
+    try { localStorage.setItem('vendracode-thinking', effort); } catch { /* ignore */ }
+    set({ thinkingEffort: effort });
+  },
 
   // AI Chat (persisted sessions; everything is written to localStorage)
   chatSessions: INITIAL_CHATS,
@@ -491,6 +532,31 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveLocks: (locks) => set({ activeLocks: locks }),
   brainActions: [],
   addBrainAction: (action) => set((s) => ({ brainActions: [action, ...s.brainActions].slice(0, 100) })),
+
+  // Messenger bots (Telegram gateway bound to an agent)
+  bots: (() => {
+    try {
+      const raw = localStorage.getItem('vendracode-bots-v1');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((b) => b && typeof b.id === 'string') : [];
+    } catch { return []; }
+  })(),
+  upsertBot: (bot) =>
+    set((s) => {
+      const exists = s.bots.some((b) => b.id === bot.id);
+      const bots = exists ? s.bots.map((b) => (b.id === bot.id ? bot : b)) : [...s.bots, bot];
+      try { localStorage.setItem('vendracode-bots-v1', JSON.stringify(bots)); } catch { /* ignore */ }
+      return { bots };
+    }),
+  removeBot: (id) =>
+    set((s) => {
+      const bots = s.bots.filter((b) => b.id !== id);
+      try { localStorage.setItem('vendracode-bots-v1', JSON.stringify(bots)); } catch { /* ignore */ }
+      return { bots };
+    }),
+  botStatuses: {},
+  setBotStatus: (id, status) =>
+    set((s) => ({ botStatuses: { ...s.botStatuses, [id]: status } })),
 
   // Cloudflare Edge Brain (multiplayer live diffs)
   brainSessionId: loadBrainSession(),

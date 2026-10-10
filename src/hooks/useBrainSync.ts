@@ -23,6 +23,7 @@ export function useBrainSync() {
   const setActiveLocks = useAppStore((s) => s.setActiveLocks);
   const applyRemoteEdit = useAppStore((s) => s.applyRemoteEdit);
   const pruneRemoteEdits = useAppStore((s) => s.pruneRemoteEdits);
+  const addBrainAction = useAppStore((s) => s.addBrainAction);
 
   // 1. Local identity + brain event subscription (mount once)
   useEffect(() => {
@@ -61,6 +62,11 @@ export function useBrainSync() {
           if (event.diff.agentId !== brainClient.getIdentity().peerId) {
             applyRemoteEdit(event.diff);
           }
+          break;
+        case 'action':
+          // Peer agents' tool calls (write/edit/read/…) — show them in the
+          // Mission Control feed alongside local activity.
+          addBrainAction(event.action);
           break;
       }
     });

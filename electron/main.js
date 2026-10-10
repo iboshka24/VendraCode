@@ -3,9 +3,13 @@ const path = require('path');
 const fs = require('fs');
 const { exec, execFile, spawn } = require('child_process');
 
-// Ensure PATH includes user bin folders where opencode, agy, etc. are located
+// Ensure PATH includes user bin folders where opencode, agy, etc. are located.
+// `VENDRA_CLI_PATH` (optional) is searched first — point it at a directory to
+// pin a specific CLI build, or at test fixtures.
 const homeDir = process.env.HOME || '';
+const cliOverrideDir = process.env.VENDRA_CLI_PATH;
 const extraPaths = [
+  ...(cliOverrideDir ? [cliOverrideDir] : []),
   path.join(homeDir, '.opencode', 'bin'),
   path.join(homeDir, '.local', 'bin'),
   path.join(homeDir, '.gemini', 'antigravity-cli', 'bin'),
@@ -526,105 +530,167 @@ ipcMain.handle('brain:reportAction', async (_event, action) => {
 
 // ─── Local Agent CLI Detection & Execution ─────────────────────────
 
+const IS_WIN = process.platform === 'win32';
+
+/** PATHEXT extensions to try on Windows (lower-case, includes the dot). */
+function windowsExts() {
+  return (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .filter(Boolean)
+    .map((e) => e.toLowerCase());
+}
+
+/** Well-known folders where agent CLIs get installed, per platform. */
+function cliSearchDirs() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (IS_WIN) {
+    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    return [
+      path.join(home, '.opencode', 'bin'),        // official install script
+      path.join(localAppData, 'opencode', 'bin'),
+      path.join(appData, 'npm'),                  // npm -g (opencode.cmd)
+      path.join(home, '.bun', 'bin'),             // bun -g
+      path.join(home, 'scoop', 'shims'),          // scoop
+      path.join(process.env.ProgramData || 'C:\\ProgramData', 'chocolatey', 'bin'),
+      path.join(localAppData, 'Programs'),
+    ];
+  }
+  return [
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.opencode', 'bin'),
+    path.join(home, '.npm-global', 'bin'),
+    path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
+    path.join(home, '.bun', 'bin'),
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+  ];
+}
+
 /**
- * Locates an agent CLI binary the same way `cli:detectAll` does: PATH first,
- * then the usual per-user install folders. Shared with the model scanner.
+ * Locates an agent CLI binary: PATH first (`where`/`which`), then the usual
+ * per-user install folders. Windows-aware — the old version only knew unix
+ * paths, so an npm/bun/installer-script opencode was never found there.
+ * Shared with the model scanner.
  */
 function resolveCliBinary(binName) {
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  const userBins = ['.local/bin', '.opencode/bin', '.npm-global/bin', '.local/share/fnm/aliases/default/bin', '.bun/bin'];
-  const candidates = [
-    ...userBins.map((dir) => path.join(home, dir, binName)),
-    path.join('/usr/local/bin', binName),
-    path.join('/usr/bin', binName),
-    path.join('/bin', binName),
-  ];
+  // 1. PATH lookup. `where` is the Windows counterpart of `which`.
   try {
-    const which = require('child_process').execFileSync('which', [binName], { encoding: 'utf8', timeout: 4000 }).trim();
-    if (which) return which;
-  } catch { /* not on PATH — fall through to the home-relative candidates */ }
-  for (const candidate of candidates) {
-    try { if (fs.existsSync(candidate)) return candidate; } catch { /* unreadable entry */ }
+    const out = require('child_process')
+      .execFileSync(IS_WIN ? 'where' : 'which', [binName], { encoding: 'utf8', timeout: 4000 })
+      .trim()
+      .split(/\r?\n/)[0];
+    if (out && fs.existsSync(out)) return out;
+  } catch { /* not on PATH — fall through to the well-known folders */ }
+
+  // 2. Well-known install folders, honouring PATHEXT on Windows.
+  const exts = IS_WIN && !path.extname(binName) ? ['', ...windowsExts()] : [''];
+  for (const dir of cliSearchDirs()) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, binName + ext);
+      try { if (fs.existsSync(candidate)) return candidate; } catch { /* unreadable */ }
+    }
   }
   return null;
 }
 
-/** Promise wrapper around the callback-style execFile. */
-function runFile(bin, args, options = {}) {
+/**
+ * Quotes one argument so `cmd.exe` treats it as a single token (Windows only —
+ * npm shims are `.cmd` files and cannot be spawned directly). Mirrors the
+ * CommandLineToArgvW rules used by cross-spawn.
+ */
+function quoteForCmd(arg) {
+  let a = String(arg);
+  if (a.length === 0) return '""';
+  // Backslashes before a quote (or before our closing quote) must be doubled.
+  a = a.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1');
+  return '"' + a + '"';
+}
+
+/** Spawns an agent CLI; `.cmd`/`.bat` shims go through cmd.exe on Windows. */
+function spawnCli(cliBin, args, options = {}) {
+  if (IS_WIN && /\.(cmd|bat)$/i.test(cliBin)) {
+    const comspec = process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
+    const line = [cliBin, ...args].map(quoteForCmd).join(' ');
+    return spawn(comspec, ['/d', '/s', '/c', line], { ...options, windowsVerbatimArguments: true });
+  }
+  return spawn(cliBin, args, options);
+}
+
+/** Runs a CLI to completion and resolves with its stdout (probes/version). */
+function runCliCapture(cliBin, args, { timeoutMs = 12000, maxBytes = 4 * 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(bin, args, options, (err, stdout, stderr) => {
-      if (err) {
-        err.stderr = stderr;
-        return reject(err);
-      }
-      resolve(stdout);
+    let child;
+    try {
+      child = spawnCli(cliBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) { reject(err); return; }
+
+    let out = '';
+    let errText = '';
+    let settled = false;
+    let timer = null;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn(value);
+    };
+    timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      finish(reject, new Error(`timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout.on('data', (d) => { if (out.length < maxBytes) out += d.toString(); });
+    child.stderr.on('data', (d) => { if (errText.length < 4096) errText += d.toString(); });
+    child.on('error', (err) => finish(reject, err));
+    child.on('close', (code) => {
+      if (code === 0) { finish(resolve, out); return; }
+      const err = new Error(`exit ${code}`);
+      err.stderr = errText;
+      err.stdout = out;
+      finish(reject, err);
     });
   });
 }
 
+/** Promise-wrapper kept for the model scanner (`opencode models`). */
+function runFile(bin, args, options = {}) {
+  return runCliCapture(bin, args, {
+    timeoutMs: options.timeout || 12000,
+    maxBytes: options.maxBuffer || 4 * 1024 * 1024,
+  });
+}
+
 ipcMain.handle('cli:detectAll', async () => {
-  // Fallback locations are derived from the current user's home directory so
-  // the detector works on any machine (no hardcoded usernames).
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  const userBins = ['.local/bin', '.opencode/bin', '.npm-global/bin', '.local/share/fnm/aliases/default/bin', '.bun/bin'];
-  const fallbacksFor = (bin) => [
-    ...userBins.map((dir) => path.join(home, dir, bin)),
-    path.join('/usr/local/bin', bin),
-    path.join('/usr/bin', bin),
-    path.join('/bin', bin),
-  ];
-
   const clis = [
-    { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', fallbackPaths: fallbacksFor('opencode') },
-    { id: 'claude', name: 'Claude Code CLI', bin: 'claude', fallbackPaths: fallbacksFor('claude') },
-    { id: 'agy', name: 'Antigravity CLI', bin: 'agy', fallbackPaths: fallbacksFor('agy') },
-    { id: 'cline', name: 'Cline CLI', bin: 'cline', fallbackPaths: fallbacksFor('cline') },
+    { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode' },
+    { id: 'claude', name: 'Claude Code CLI', bin: 'claude' },
+    { id: 'agy', name: 'Antigravity CLI', bin: 'agy' },
+    { id: 'cline', name: 'Cline CLI', bin: 'cline' },
   ];
 
-  const results = await Promise.all(
-    clis.map(async (cli) => {
-      return new Promise((resolve) => {
-        const resolveWith = (detectedPath) => {
-          if (!detectedPath) {
-            resolve({
-              id: cli.id, name: cli.name, bin: cli.bin,
-              isInstalled: false, path: null, version: '',
-            });
-            return;
-          }
-
-          // A binary that exists but cannot execute (e.g. a stale wrapper) is
-          // reported as not installed instead of failing later at spawn time.
-          execFile(detectedPath, ['--version'], { timeout: 15000 }, (verErr, stdout) => {
-            resolve({
-              id: cli.id,
-              name: cli.name,
-              bin: cli.bin,
-              isInstalled: !verErr,
-              path: !verErr ? detectedPath : null,
-              version: !verErr ? (stdout || '').trim().split('\n')[0].slice(0, 60) : '',
-            });
-          });
-        };
-
-        execFile('which', [cli.bin], (err, stdout) => {
-          let detectedPath = (!err && stdout.trim()) ? stdout.trim() : null;
-
-          if (!detectedPath) {
-            for (const fp of cli.fallbackPaths) {
-              try {
-                if (fs.existsSync(fp)) { detectedPath = fp; break; }
-              } catch {}
-            }
-          }
-
-          resolveWith(detectedPath);
-        });
-      });
-    })
-  );
-
-  return results;
+  return Promise.all(clis.map(async (cli) => {
+    const detectedPath = resolveCliBinary(cli.bin);
+    if (!detectedPath) {
+      return { id: cli.id, name: cli.name, bin: cli.bin, isInstalled: false, path: null, version: '' };
+    }
+    // A binary that exists but cannot execute (stale wrapper, broken shim) is
+    // reported as not installed instead of failing later at spawn time.
+    try {
+      const stdout = await runCliCapture(detectedPath, ['--version'], { timeoutMs: 15000 });
+      return {
+        id: cli.id,
+        name: cli.name,
+        bin: cli.bin,
+        isInstalled: true,
+        path: detectedPath,
+        version: (stdout || '').trim().split('\n')[0].slice(0, 60),
+      };
+    } catch {
+      return { id: cli.id, name: cli.name, bin: cli.bin, isInstalled: false, path: null, version: '' };
+    }
+  }));
 });
 
 ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cwd, prompt }) => {
@@ -638,7 +704,7 @@ ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cw
       procArgs.push(prompt);
     }
 
-    const child = spawn(cliBin, procArgs, {
+    const child = spawnCli(cliBin, procArgs, {
       cwd: cwd || process.env.HOME,
       env: {
         ...process.env,
@@ -1081,3 +1147,145 @@ ipcMain.handle('brain:broadcastTyping', async (_event, payload) => {
   broadcastToWindow('brain:agentTyping', payload);
   return { success: true };
 });
+
+// ─── Messenger Bots (Telegram gateway, Hermes-style) ────────────────
+// Binds a Telegram bot to an agent: messages sent to the bot are routed into
+// the IDE chat (so you watch the agent answer live) and the agent's reply is
+// posted back to the chat. `VENDRA_TELEGRAM_API` allows pointing at a
+// self-hosted Bot API server (and powers the local-stub test).
+const TELEGRAM_API = (process.env.VENDRA_TELEGRAM_API || 'https://api.telegram.org').replace(/\/+$/, '');
+/** id → { id, token, status, username, error, pairedChatId, abort, offset } */
+const botRuntime = new Map();
+
+async function tgCall(token, method, payload) {
+  const res = await fetch(`${TELEGRAM_API}/bot${token}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!data.ok) {
+    const err = new Error(data.description || `Telegram ${method} failed (HTTP ${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  return data.result;
+}
+
+function botStatus(id) {
+  const b = botRuntime.get(id);
+  if (!b) return { id, status: 'stopped', username: null, error: null, pairedChatId: null };
+  return { id, status: b.status, username: b.username, error: b.error, pairedChatId: b.pairedChatId };
+}
+
+function broadcastBotStatus(id) {
+  broadcastToWindow('bot:status', botStatus(id));
+}
+
+function stopBot(id) {
+  const b = botRuntime.get(id);
+  if (!b) return false;
+  b.abort.aborted = true;
+  b.status = 'stopped';
+  broadcastBotStatus(id);
+  botRuntime.delete(id);
+  return true;
+}
+
+async function startBot(id, token, pairedChatId) {
+  stopBot(id);
+  const entry = {
+    id,
+    token,
+    status: 'connecting',
+    username: null,
+    error: null,
+    pairedChatId: pairedChatId || null,
+    abort: { aborted: false },
+  };
+  botRuntime.set(id, entry);
+  broadcastBotStatus(id);
+
+  try {
+    const me = await tgCall(token, 'getMe', {});
+    entry.username = me.username || String(me.id);
+    entry.status = 'running';
+    broadcastBotStatus(id);
+  } catch (err) {
+    entry.status = 'error';
+    entry.error = err.message;
+    broadcastBotStatus(id);
+    return { ok: false, error: err.message };
+  }
+
+  // Long-poll loop: the simplest transport for a desktop app (no public URL).
+  (async () => {
+    let offset = 0;
+    while (!entry.abort.aborted) {
+      try {
+        const updates = await tgCall(token, 'getUpdates', { offset, timeout: 25, allowed_updates: ['message'] });
+        for (const u of updates || []) {
+          offset = Math.max(offset, (u.update_id || 0) + 1);
+          const msg = u.message;
+          if (!msg || typeof msg.text !== 'string') continue;
+          const chatId = String(msg.chat?.id ?? '');
+          const from = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ')
+            || msg.from?.username || 'user';
+
+          // Pairing (Hermes' allow_all_users: false): the first chat that
+          // writes claims the bot; anybody else is politely turned away.
+          if (!entry.pairedChatId) {
+            entry.pairedChatId = chatId;
+            broadcastBotStatus(id);
+          } else if (entry.pairedChatId !== chatId) {
+            await tgCall(token, 'sendMessage', { chat_id: chatId, text: 'This bot is paired with another user.' })
+              .catch(() => {});
+            continue;
+          }
+
+          if (msg.text.trim() === '/start') {
+            await tgCall(token, 'sendMessage', {
+              chat_id: chatId,
+              text: 'Connected to VendraCode. Send a task — the bound agent will answer right here.',
+            }).catch(() => {});
+            continue;
+          }
+
+          broadcastToWindow('bot:incoming', { botId: id, chatId, from, text: msg.text });
+        }
+      } catch (err) {
+        if (entry.abort.aborted) break;
+        entry.status = 'error';
+        entry.error = err.message;
+        broadcastBotStatus(id);
+        await new Promise((r) => setTimeout(r, 4000));
+        if (entry.abort.aborted) break;
+        entry.status = 'running';
+        entry.error = null;
+        broadcastBotStatus(id);
+      }
+    }
+  })();
+
+  return { ok: true, username: entry.username };
+}
+
+ipcMain.handle('bot:start', async (_event, { id, token, pairedChatId }) =>
+  startBot(String(id), String(token || '').trim(), pairedChatId));
+ipcMain.handle('bot:stop', async (_event, { id }) => ({ ok: stopBot(String(id)) }));
+ipcMain.handle('bot:send', async (_event, { id, chatId, text }) => {
+  const b = botRuntime.get(String(id));
+  if (!b) return { ok: false, error: 'bot not running' };
+  try {
+    // Telegram caps messages at 4096 chars — chunk long agent answers.
+    const chunks = String(text || '(empty)').match(/[\s\S]{1,4000}/g) || [''];
+    for (const chunk of chunks) {
+      await tgCall(b.token, 'sendMessage', { chat_id: chatId, text: chunk });
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+ipcMain.handle('bot:status', async () =>
+  Object.fromEntries([...botRuntime.keys()].map((id) => [id, botStatus(id)])));

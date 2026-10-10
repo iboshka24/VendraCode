@@ -3,24 +3,55 @@ import { useAppStore } from '@/stores/appStore';
 import { SettingsTab, ProviderConfig, LLMProvider } from '@/types/index';
 import { 
   Settings as SettingsIcon, Monitor, Palette, Shield, 
-  Users, GitBranch, Check, X, Plus, Trash2, TestTube, Bot, Terminal, Key
+  Users, GitBranch, Check, X, Plus, Trash2, TestTube, Bot, Terminal, Key, Send, Play, Square
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { CHAT_AGENTS } from '@/utils/chatAgents';
 
 export const Settings: React.FC = () => {
-  const { settings, updateSettings, updateProvider, settingsTab, setSettingsTab, localCLIs } = useAppStore();
+  const { settings, updateSettings, updateProvider, settingsTab, setSettingsTab, localCLIs, bots, botStatuses, upsertBot, removeBot } = useAppStore();
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
   const [scanningProvider, setScanningProvider] = useState<string | null>(null);
   const [scannedModelsByProvider, setScannedModelsByProvider] = useState<Record<string, any[]>>({});
+  const [newBotToken, setNewBotToken] = useState('');
+  const [newBotAgent, setNewBotAgent] = useState('opencode');
 
   const tabs = [
     { id: 'providers', label: 'Agents & Providers', icon: <Bot size={16} /> },
+    { id: 'bots', label: 'Messenger Bots', icon: <Send size={16} /> },
     { id: 'permissions', label: 'Permissions & Gates', icon: <Shield size={16} /> },
     { id: 'general', label: 'General', icon: <Monitor size={16} /> },
     { id: 'editor', label: 'Editor', icon: <Palette size={16} /> },
     { id: 'sessions', label: 'Sessions', icon: <GitBranch size={16} /> },
     { id: 'team', label: 'Team', icon: <Users size={16} /> },
   ] as const;
+
+  /** Creates a bot binding and starts its Telegram long-poll immediately. */
+  const handleAddBot = async () => {
+    const token = newBotToken.trim();
+    if (!token) return;
+    const id = `bot-${Date.now()}`;
+    upsertBot({ id, label: '', token, agentId: newBotAgent, enabled: true, pairedChatId: null });
+    setNewBotToken('');
+    await window.vendraAPI?.bots.start({ id, token }).catch(() => {});
+  };
+
+  const handleToggleBot = async (botId: string) => {
+    const bot = bots.find((b) => b.id === botId);
+    if (!bot) return;
+    if (bot.enabled) {
+      await window.vendraAPI?.bots.stop({ id: bot.id }).catch(() => {});
+      upsertBot({ ...bot, enabled: false });
+    } else {
+      upsertBot({ ...bot, enabled: true });
+      await window.vendraAPI?.bots.start({ id: bot.id, token: bot.token, pairedChatId: bot.pairedChatId }).catch(() => {});
+    }
+  };
+
+  const handleDeleteBot = async (botId: string) => {
+    await window.vendraAPI?.bots.stop({ id: botId }).catch(() => {});
+    removeBot(botId);
+  };
 
   const handleScanProviderModels = async (provider: ProviderConfig) => {
     setScanningProvider(provider.id);
@@ -417,6 +448,123 @@ export const Settings: React.FC = () => {
                   className="w-40 accent-pop cursor-pointer"
                 />
               </div>
+            </motion.div>
+          )}
+
+          {/* ─── Messenger Bots Tab ─── */}
+          {settingsTab === 'bots' && (
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+              <div>
+                <h3 className="text-sm font-bold text-text-primary">Messenger Bots</h3>
+                <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                  Bind a Telegram bot to an agent (the Hermes-style gateway). Messages sent to the bot run that agent
+                  in this chat — you watch it live, tool calls and live file writes included — and the answer is posted
+                  back to Telegram. The first chat that writes claims the bot; anyone else is turned away. Create a bot
+                  with <span className="font-mono text-text-secondary">@BotFather</span> and paste its token here.
+                </p>
+              </div>
+
+              <div className="p-3 bg-bgside rounded-xl border border-border space-y-2">
+                <div className="text-[11px] font-semibold text-text-primary">Add a bot</div>
+                <div className="flex gap-2">
+                  <input
+                    value={newBotToken}
+                    onChange={(e) => setNewBotToken(e.target.value)}
+                    placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+                    className="flex-1 min-w-0 bg-surface border border-border rounded-lg px-2.5 py-1.5 text-xs text-text-primary font-mono focus:border-pop outline-none"
+                  />
+                  <select
+                    value={newBotAgent}
+                    onChange={(e) => setNewBotAgent(e.target.value)}
+                    className="bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text-primary outline-none"
+                  >
+                    {CHAT_AGENTS.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleAddBot}
+                    disabled={!newBotToken.trim()}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                      newBotToken.trim()
+                        ? 'bg-pop text-white hover:opacity-90'
+                        : 'bg-chip text-text-muted cursor-not-allowed'
+                    }`}
+                  >
+                    <Plus size={12} /> Add
+                  </button>
+                </div>
+              </div>
+
+              {bots.length === 0 ? (
+                <div className="p-8 text-center text-text-muted bg-bgside rounded-xl border border-border">
+                  <Send size={26} className="mx-auto mb-2 opacity-30 text-accent" />
+                  <div className="text-xs">No bots bound yet — add a token above.</div>
+                </div>
+              ) : (
+                bots.map((bot) => {
+                  const st = botStatuses[bot.id];
+                  const status = st?.status || (bot.enabled ? 'connecting' : 'stopped');
+                  const title = st?.username ? `@${st.username}` : (bot.label || 'Telegram bot');
+                  return (
+                    <div key={bot.id} className="p-3 bg-bgside rounded-xl border border-border space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Send size={13} className="text-accent shrink-0" />
+                          <span className="text-xs font-semibold text-text-primary truncate">{title}</span>
+                          <span className={`text-[9px] uppercase px-1.5 py-0.5 rounded border shrink-0 ${
+                            status === 'running'
+                              ? 'text-ok border-ok/40'
+                              : status === 'error'
+                                ? 'text-danger border-danger/40'
+                                : 'text-text-muted border-border'
+                          }`}>
+                            {status}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBot(bot.id)}
+                            className="px-2 py-1 rounded-lg text-[10px] font-semibold border border-border text-text-secondary hover:text-text-primary hover:bg-surface-hover flex items-center gap-1"
+                          >
+                            {bot.enabled ? <><Square size={10} /> Stop</> : <><Play size={10} /> Start</>}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteBot(bot.id)}
+                            className="p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-surface-hover"
+                            title="Delete this bot"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap text-[10px] text-text-muted">
+                        <span>Agent:</span>
+                        <select
+                          value={bot.agentId}
+                          onChange={(e) => upsertBot({ ...bot, agentId: e.target.value })}
+                          className="bg-surface border border-border rounded-lg px-1.5 py-1 text-[10px] text-text-primary outline-none"
+                        >
+                          {CHAT_AGENTS.map((a) => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
+                        {st?.pairedChatId && (
+                          <span className="font-mono">paired chat: {st.pairedChatId} (send /start in Telegram)</span>
+                        )}
+                      </div>
+
+                      {st?.error && (
+                        <div className="text-[10px] text-danger font-mono break-all">{st.error}</div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </motion.div>
           )}
 

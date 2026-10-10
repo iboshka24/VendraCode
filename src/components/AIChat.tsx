@@ -2,34 +2,27 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Send, Bot, User, Loader2, Wrench, X, Settings, ChevronDown, MessageSquare, Plus, Trash2, 
   Sparkles, Square, Globe, Camera, Cpu, Terminal, ExternalLink,
-  Search, CheckCircle2, AlertCircle, FileCode, Check, Layers, Play, Maximize2, Minimize2
+  Search, CheckCircle2, AlertCircle, FileCode, Check, Layers, Play, Maximize2, Minimize2, BrainCircuit
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/stores/appStore';
 import type { LocalCLIDetected, ChatSession } from '@/types';
 import { brainClient } from '@/services/brainClient';
 import { toWorkspaceRelative } from '@/utils/workspacePath';
-import { parseCliChunk, opencodeRunArgs, opencodeModelOverride, deriveChatTitle, extractAgentWrite } from '@/utils/opencodeStream';
+import { parseCliChunk, opencodeRunArgs, opencodeModelOverride, deriveChatTitle, extractAgentWrite, toTelegramText } from '@/utils/opencodeStream';
+import { MarkdownMessage } from './MarkdownMessage';
+import { CHAT_AGENTS, type ChatAgentOption } from '@/utils/chatAgents';
 import { ChatMessage, ToolCall, ProviderConfig, ApprovalRequest } from '@/types/index';
 import { AGENT_TOOLS } from '@/utils/providers';
 
-interface ChatAgentOption {
-  id: string;
-  name: string;
-  bin: string;
-  type: 'native' | 'cli';
-  icon: string;
-  color: string;
-  badge: string;
-  description: string;
-}
-
-const CHAT_AGENTS: ChatAgentOption[] = [
-  { id: 'vendra-ai', name: 'Vendra AI', bin: 'native', type: 'native', icon: '🤖', color: '#7c3aed', badge: 'HERMES', description: 'Autonomous agent with DuckDuckGo web search & desktop screen capture' },
-  { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', type: 'cli', icon: '⚡', color: '#ffa94d', badge: 'OPENCODE', description: 'Redirects prompts into local OpenCode CLI process & reflects actions in GUI' },
-  { id: 'agy', name: 'Antigravity CLI', bin: 'agy', type: 'cli', icon: '🚀', color: '#38d9a9', badge: 'AGY', description: 'Google Antigravity CLI process coordinating via Brain' },
-  { id: 'cline', name: 'Cline CLI', bin: 'cline', type: 'cli', icon: '💻', color: '#4dabf7', badge: 'CLINE', description: 'Autonomous coding agent CLI running in dedicated worktree' },
-  { id: 'claude', name: 'Claude Code', bin: 'claude', type: 'cli', icon: '🧠', color: '#f06595', badge: 'CLAUDE', description: 'Anthropic Claude Code CLI running locally' },
+/** Chat slash commands — handled locally, work with every agent. */
+const SLASH_COMMANDS: Array<{ cmd: string; desc: string }> = [
+  { cmd: '/help', desc: 'Show these commands' },
+  { cmd: '/yolo', desc: 'Toggle YOLO mode — skip approval prompts' },
+  { cmd: '/models', desc: 'Scan and open the model picker' },
+  { cmd: '/new', desc: 'Start a new chat' },
+  { cmd: '/clear', desc: 'Clear this chat' },
+  { cmd: '/stop', desc: 'Stop the running agent' },
 ];
 
 /** `cli-tokenharbor` → `Token Harbor` — display name for a discovered provider. */
@@ -66,6 +59,11 @@ export const AIChat: React.FC = () => {
   const setActiveChatMessages = useAppStore((s) => s.setActiveChatMessages);
   const setChatCliSession = useAppStore((s) => s.setChatCliSession);
   const startLiveWrite = useAppStore((s) => s.startLiveWrite);
+  const setActiveAgentLabel = useAppStore((s) => s.setActiveAgentLabel);
+  const yoloMode = useAppStore((s) => s.yoloMode);
+  const setYoloMode = useAppStore((s) => s.setYoloMode);
+  const thinkingEffort = useAppStore((s) => s.thinkingEffort);
+  const setThinkingEffort = useAppStore((s) => s.setThinkingEffort);
 
   // Agent panel width (drag-resizable in App; the button here expands it)
   const chatPanelWidth = useAppStore((s) => s.chatPanelWidth);
@@ -91,6 +89,7 @@ export const AIChat: React.FC = () => {
   const [selectedAgent, setSelectedAgent] = useState<ChatAgentOption>(CHAT_AGENTS[0]);
   const [isAgentDropdownOpen, setIsAgentDropdownOpen] = useState(false);
   const [isProviderDropdownOpen, setIsProviderDropdownOpen] = useState(false);
+  const [isThinkingOpen, setIsThinkingOpen] = useState(false);
   const [expandedToolMsgId, setExpandedToolMsgId] = useState<string | null>(null);
 
   // Dynamic Model Scanner state
@@ -159,7 +158,7 @@ export const AIChat: React.FC = () => {
 
     const requiresApproval = ['create_file', 'edit_file', 'delete_file', 'run_command'].includes(name);
 
-    if (requiresApproval && settings?.permissions?.requireApproval) {
+    if (requiresApproval && settings?.permissions?.requireApproval && !yoloMode) {
       const approved = await new Promise<boolean>((resolve) => {
         setPendingApproval({
           request: {
@@ -199,16 +198,31 @@ export const AIChat: React.FC = () => {
         case 'create_file':
         case 'edit_file':
           await api.fs.writeFile(args.path, args.content);
-          // Publish the edit to the swarm so teammates (and their agents) see it.
+          // Publish the edit to the swarm so teammates (and their agents) see
+          // it, attributed to this agent rather than the human.
           brainClient.sendDiff(
             toWorkspaceRelative(args.path, workspacePath),
             [{
               range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
               text: String(args.content || '').split('\n')[0].slice(0, 400),
               rangeLength: 0,
-            }]
+            }],
+            { id: 'agent-vendra-ai', name: selectedAgent.name, color: selectedAgent.color }
           );
-          brainClient.acquireLock(toWorkspaceRelative(args.path, workspacePath));
+          brainClient.acquireLock(
+            toWorkspaceRelative(args.path, workspacePath),
+            { id: 'agent-vendra-ai', name: selectedAgent.name }
+          );
+          // Show it being written in the editor, same as CLI agents do.
+          startLiveWrite({
+            agentId: 'agent-vendra-ai',
+            agentName: selectedAgent.name,
+            color: selectedAgent.color || '#7c3aed',
+            path: String(args.path),
+            fileName: String(args.path).split('/').pop() || String(args.path),
+            kind: 'write',
+            content: String(args.content ?? ''),
+          });
           if (api.brain?.broadcastTyping) {
             await api.brain.broadcastTyping({
               agentId: selectedAgent.id,
@@ -424,6 +438,18 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
           ...(m.toolCalls ? { tool_calls: m.toolCalls } : {})
         }));
 
+        // Reasoning effort, where supported: OpenRouter takes `reasoning`,
+        // OpenAI takes `reasoning_effort`. Unknown endpoints stay untouched so
+        // strict APIs don't 400 on unexpected fields.
+        const reasoningBody: Record<string, unknown> = {};
+        if (thinkingEffort && thinkingEffort !== 'default') {
+          if (/openrouter\.ai/i.test(activeProvider.baseUrl)) {
+            reasoningBody.reasoning = { effort: thinkingEffort };
+          } else if (/api\.openai\.com/i.test(activeProvider.baseUrl)) {
+            reasoningBody.reasoning_effort = thinkingEffort;
+          }
+        }
+
         const response = await fetch(`${activeProvider.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
@@ -434,7 +460,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             model: activeProvider.model,
             messages: apiMessages,
             tools: AGENT_TOOLS,
-            tool_choice: 'auto'
+            tool_choice: 'auto',
+            ...reasoningBody
           })
         });
 
@@ -508,6 +535,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     const run = runningAgent;
     setRunningAgent(null);
     cleanupCliRun();
+    setActiveAgentLabel('');
     if (run && window.vendraAPI?.cli) {
       try { await window.vendraAPI.cli.stopAgent(run.agentId); } catch {}
       setMessages(prev => prev.map(m => (m.id === run.messageId
@@ -578,6 +606,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     const toolMsgIds = new Map<string, string>();
     /** Tool calls whose file write was already mirrored into the editor. */
     const handledWrites = new Set<string>();
+    /** Workspace-relative files this run locked on the brain. */
+    const agentLockedFiles = new Set<string>();
 
     const flush = () => {
       cliFlushTimerRef.current = null;
@@ -644,8 +674,16 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             textMsgId = null;
             upsertToolMessage(parsed.tool);
 
-            // A real file write: open the file in the editor and mirror the
-            // code as it is written, instead of only reporting the tool call.
+            // Teammates see what this agent is doing (Mission Control feed).
+            const agentWho = { id: `agent-${agent.id}`, name: agent.name, color: agent.color || '#ffa94d' };
+            const toolPath = typeof parsed.tool.input?.path === 'string' ? String(parsed.tool.input.path) : undefined;
+            brainClient.sendAction(
+              { tool: parsed.tool.name, status: parsed.tool.status, file: toolPath },
+              agentWho
+            );
+
+            // A real file write: mirror it locally AND tell teammates — locked
+            // file plus a live-edit diff attributed to the agent.
             const callKey = parsed.tool.id || `${parsed.tool.name}-${parsed.tool.status}`;
             if (!handledWrites.has(callKey)) {
               const write = extractAgentWrite(parsed.tool);
@@ -654,6 +692,29 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                 const absPath = write.path.startsWith('/')
                   ? write.path
                   : `${(workspacePath || '').replace(/\/+$/, '')}/${write.path.replace(/^\/+/, '')}`;
+                const relPath = toWorkspaceRelative(absPath, workspacePath);
+                brainClient.acquireLock(relPath, agentWho);
+                agentLockedFiles.add(relPath);
+                if (write.kind === 'write' && typeof write.content === 'string') {
+                  brainClient.sendDiff(relPath, [{
+                    range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+                    text: write.content.slice(0, 4000),
+                    rangeLength: 0,
+                  }], agentWho);
+                } else if (write.kind === 'edit') {
+                  // Resolve the changed line from the current on-disk copy so
+                  // peers highlight where it actually happened.
+                  window.vendraAPI.fs.readFile(absPath).then((before) => {
+                    const idx = typeof write.oldString === 'string' ? before.indexOf(write.oldString) : -1;
+                    const line = Math.max(1, (idx >= 0 ? before.slice(0, idx) : before).split('\n').length);
+                    const added = (write.newString || '').split('\n').length;
+                    brainClient.sendDiff(relPath, [{
+                      range: { startLineNumber: line, startColumn: 1, endLineNumber: line + added, endColumn: 1 },
+                      text: '',
+                      rangeLength: (write.oldString || '').length || 1,
+                    }], agentWho);
+                  }).catch(() => { /* peer highlight is best-effort */ });
+                }
                 startLiveWrite({
                   agentId: `agent-${agent.id}`,
                   agentName: agent.name,
@@ -696,7 +757,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     const argsByAgent: Record<string, string[]> = {
       opencode: opencodeRunArgs({
         sessionId: activeChat?.opencodeSessionId,
-        model: opencodeModelOverride(activeProvider || undefined),
+        model: opencodeModelOverride(activeProvider || undefined, thinkingEffort),
       }),
       claude: ['-p', '--dangerously-skip-permissions'],
       agy: ['run', '--auto'],
@@ -721,6 +782,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       closed = true;
       cleanupCliRun();
       setAgentStatus?.('idle');
+      setActiveAgentLabel('');
       setMessages(prev => prev.map(m => (m.id === messageId
         ? { ...m, content: `${seedMessage.content}\n\n⚠️ **Failed to start ${agent.name}**: ${spawnError}` }
         : m)));
@@ -744,6 +806,13 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     cleanupCliRun();
     setRunningAgent(null);
     setAgentStatus?.('idle');
+    setActiveAgentLabel('');
+
+    // Release the advisory locks this run placed on the brain.
+    for (const relPath of agentLockedFiles) {
+      try { brainClient.releaseLock(relPath); } catch { /* socket may be gone */ }
+    }
+    agentLockedFiles.clear();
 
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
     const verdict = (exitCode === 0)
@@ -762,9 +831,75 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     }
   };
 
+  /**
+   * Handles `/commands` locally (no agent round-trip). Returns true when the
+   * input was a command, false to let it through as a normal message.
+   */
+  const runSlashCommand = async (input: string): Promise<boolean> => {
+    const [rawCmd, ...rest] = input.slice(1).split(/\s+/);
+    const cmd = rawCmd.toLowerCase();
+    const say = (content: string) => {
+      setMessages((prev) => [...prev, {
+        role: 'system' as const,
+        id: `sys-cmd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: Date.now(),
+        content,
+      }]);
+    };
+    setInputValue('');
+
+    switch (cmd) {
+      case 'help':
+        say([
+          '**Slash commands**',
+          '',
+          ...SLASH_COMMANDS.map((c) => `- \`${c.cmd}\` — ${c.desc}`),
+        ].join('\n'));
+        return true;
+
+      case 'yolo': {
+        const next = !yoloMode;
+        setYoloMode(next);
+        say(next
+          ? '🚀 **YOLO mode ON** — Vendra AI runs tools without approval prompts. CLI agents already run in auto mode (`--auto` / `--dangerously-skip-permissions`).'
+          : '🛡 **YOLO mode OFF** — Vendra AI asks for approval before create/edit/delete/run.');
+        return true;
+      }
+
+      case 'models':
+        await handleScanModels();
+        return true;
+
+      case 'new':
+        createChat(selectedAgent.id);
+        return true;
+
+      case 'clear':
+        setMessages([]);
+        say('🧹 Chat cleared.');
+        return true;
+
+      case 'stop':
+        await stopCliAgent();
+        say(runningAgent ? '⏹ Stop requested.' : 'No agent is running.');
+        return true;
+
+      default:
+        say(`❓ Unknown command \`/${cmd}\`. Try \`/help\`.`);
+        return true;
+    }
+  };
+
   // Dispatch message to agent (either native LLM or local CLI process)
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string, overrideAgent?: ChatAgentOption) => {
     if (!text.trim()) return;
+    const runAgent = overrideAgent || selectedAgent;
+
+    // ─── Slash commands are handled locally, for every agent ───
+    if (text.trim().startsWith('/')) {
+      const handled = await runSlashCommand(text.trim());
+      if (handled) return;
+    }
 
     const userMessage: ChatMessage = {
       role: 'user',
@@ -778,14 +913,21 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       rememberChatTitle(activeChat.id, text);
     }
 
-    let currentMessages = [...messages, userMessage];
+    // Read the freshest message list from the store — the render closure can
+    // be stale when messages were appended moments ago (bot notes, queued
+    // runs), and setMessages would silently clobber them otherwise.
+    const liveState = useAppStore.getState();
+    const liveChat = liveState.chatSessions.find((c) => c.id === liveState.activeChatId);
+    let currentMessages = [...(liveChat?.messages ?? messages), userMessage];
     setMessages(currentMessages);
     setInputValue('');
     setAgentStatus?.('running');
+    // Lets the file watcher attribute writes by unparsed tools to this agent.
+    setActiveAgentLabel(runAgent.name);
 
     // ─── CASE A: Local CLI Process (OpenCode, Claude Code, …) ───
-    if (selectedAgent.type === 'cli') {
-      await runCliAgent(text, currentMessages, selectedAgent);
+    if (runAgent.type === 'cli') {
+      await runCliAgent(text, currentMessages, runAgent);
       return;
     }
 
@@ -794,8 +936,69 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       await runAutonomousAgentLoop(text, currentMessages, 'VendraCode AI');
     } finally {
       setAgentStatus?.('idle');
+      setActiveAgentLabel('');
     }
   };
+
+  // ── Messenger bot routing: Telegram message → bound agent → reply back ──
+  // Kept in refs so the listener/subscription survives re-renders without
+  // capturing stale state.
+  const sendMessageRef = useRef<(text: string, agent?: ChatAgentOption) => Promise<void>>(async () => {});
+  sendMessageRef.current = sendMessage;
+  const botQueueRef = useRef<Array<{ botId: string; chatId: string; from: string; text: string; agentId: string }>>([]);
+  const botBusyRef = useRef(false);
+
+  const processBotQueue = useCallback(async () => {
+    if (botBusyRef.current) return;
+    botBusyRef.current = true;
+    try {
+      while (botQueueRef.current.length) {
+        const item = botQueueRef.current.shift()!;
+        const agent = CHAT_AGENTS.find((a) => a.id === item.agentId) || CHAT_AGENTS[0];
+        setMessages((prev) => [...prev, {
+          role: 'system' as const,
+          id: `sys-bot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: Date.now(),
+          content: `📨 **${item.from}** via messenger bot → **${agent.name}**`,
+        }]);
+        try {
+          await sendMessageRef.current(item.text, agent);
+          const state = useAppStore.getState();
+          const msgs = state.chatSessions.find((c) => c.id === state.activeChatId)?.messages || [];
+          const assistants = msgs.filter((m) => m.role === 'assistant' && m.content);
+          const answerMsg = [...assistants].reverse().find((m) => !m.id.startsWith('cli-run-'))
+            || assistants[assistants.length - 1];
+          await window.vendraAPI.bots.send({
+            id: item.botId,
+            chatId: item.chatId,
+            text: toTelegramText(answerMsg?.content || ''),
+          });
+        } catch (err: any) {
+          try {
+            await window.vendraAPI.bots.send({
+              id: item.botId,
+              chatId: item.chatId,
+              text: `⚠️ Agent failed: ${err?.message || String(err)}`,
+            });
+          } catch { /* bot may be stopped */ }
+        }
+      }
+    } finally {
+      botBusyRef.current = false;
+    }
+  }, [setMessages]);
+
+  useEffect(() => {
+    const onBotMessage = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        { botId: string; chatId: string; from: string; text: string; agentId: string } | undefined;
+      if (!detail?.botId || !detail.text) return;
+      botQueueRef.current.push(detail);
+      void processBotQueue();
+    };
+    window.addEventListener('vendracode:bot-incoming', onBotMessage as EventListener);
+    return () => window.removeEventListener('vendracode:bot-incoming', onBotMessage as EventListener);
+  }, [processBotQueue]);
 
   // Quick Action triggers for Hermes skills
   const triggerQuickSearch = () => {
@@ -1079,6 +1282,52 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
           )}
         </div>
 
+        {/* Thinking / reasoning effort */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            className="agentpill"
+            onClick={() => {
+              setIsThinkingOpen(!isThinkingOpen);
+              setIsModelPickerOpen(false);
+              setIsAgentDropdownOpen(false);
+              setIsProviderDropdownOpen(false);
+            }}
+            title="Reasoning effort — CLI agents get a model variant (#high), the native agent a reasoning parameter"
+          >
+            <BrainCircuit className="w-3.5 h-3.5 text-accent" />
+            <span className="text-[10px] font-semibold text-text-primary capitalize">
+              {thinkingEffort === 'default' ? 'think' : thinkingEffort}
+            </span>
+            <ChevronDown className="w-3 h-3 text-text-muted" />
+          </button>
+          {isThinkingOpen && (
+            <div className="absolute right-0 mt-1.5 w-48 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1.5">
+              <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider">
+                Reasoning effort
+              </div>
+              {(['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => { setThinkingEffort(v); setIsThinkingOpen(false); }}
+                  className={`w-full text-left px-2 py-1 rounded-lg text-[11px] capitalize transition-colors ${
+                    thinkingEffort === v
+                      ? 'bg-chip text-text-primary font-bold'
+                      : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+              <p className="text-[9px] text-text-muted px-2 py-1 border-t border-border mt-1 leading-snug">
+                CLI: appends <span className="font-mono">#variant</span> to the model. Models without that
+                variant show the CLI's real error — pick <em>default</em> then.
+              </p>
+            </div>
+          )}
+        </div>
+
         {/* Widen / restore the agent panel (the left edge is also draggable) */}
         <button
           type="button"
@@ -1160,8 +1409,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                   <div className="w-6 h-6 rounded-md bg-chip border border-border flex items-center justify-center shrink-0 mt-0.5 text-xs">
                     <span>{selectedAgent.icon}</span>
                   </div>
-                  <div className="bg-surface border border-border text-text-primary px-3 py-2 rounded-xl max-w-[90%] text-xs leading-relaxed whitespace-pre-wrap select-text">
-                    {msg.content}
+                  <div className="bg-surface border border-border text-text-primary px-3 py-2 rounded-xl max-w-[90%] select-text overflow-hidden">
+                    <MarkdownMessage content={msg.content} />
                   </div>
                 </motion.div>
               );
@@ -1178,8 +1427,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                   animate={{ opacity: 1, y: 0 }}
                   className="flex justify-center"
                 >
-                  <div className="text-[10px] leading-relaxed text-text-muted bg-surface/70 border border-border-light px-2.5 py-1 rounded-lg max-w-[92%] whitespace-pre-wrap text-center select-text">
-                    {msg.content}
+                  <div className="text-[10px] leading-relaxed text-text-muted bg-surface/70 border border-border-light px-2.5 py-1 rounded-lg max-w-[92%] text-center select-text">
+                    <MarkdownMessage content={msg.content} />
                   </div>
                 </motion.div>
               );
@@ -1413,6 +1662,25 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
 
       {/* ─── Input Area with Hermes Skill Triggers ─── */}
       <div className="p-3 border-t border-border bg-bgtitle shrink-0">
+        {/* Slash-command autocomplete */}
+        {inputValue.startsWith('/') && !inputValue.includes(' ') && (
+          <div className="mb-2 border border-border-light bg-surface rounded-lg overflow-hidden shadow-lg">
+            {SLASH_COMMANDS.filter((c) => c.cmd.startsWith(inputValue.toLowerCase())).map((c) => (
+              <button
+                key={c.cmd}
+                type="button"
+                onClick={() => setInputValue(`${c.cmd} `)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[11px] hover:bg-surface-hover transition-colors"
+              >
+                <span className="font-mono text-accent">{c.cmd}</span>
+                <span className="text-text-muted truncate">{c.desc}</span>
+              </button>
+            ))}
+            {SLASH_COMMANDS.filter((c) => c.cmd.startsWith(inputValue.toLowerCase())).length === 0 && (
+              <div className="px-2.5 py-1.5 text-[11px] text-text-muted">No matching command — try <span className="font-mono">/help</span></div>
+            )}
+          </div>
+        )}
         {/* Hermes Skill Bar */}
         <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
           <button
@@ -1450,7 +1718,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Ask ${selectedAgent.name} to write code, edit files, or search... (Enter to send)`}
+            placeholder={`Ask ${selectedAgent.name} to write code, edit files, or search... (Enter to send · / for commands)`}
             className="w-full max-h-32 min-h-[44px] bg-transparent text-text-primary text-xs p-3 resize-none outline-none leading-relaxed"
             rows={Math.min(5, inputValue.split('\n').length || 1)}
           />
