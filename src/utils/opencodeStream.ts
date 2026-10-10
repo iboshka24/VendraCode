@@ -20,7 +20,7 @@ export interface ParsedCliChunk {
    * A tool call/status update emitted by the CLI. Rendered as its own compact
    * message instead of being glued into the surrounding text.
    */
-  tool?: { id?: string; name: string; status?: string };
+  tool?: { id?: string; name: string; status?: string; input?: Record<string, unknown> };
 }
 
 const EVENT_LABELS: Record<string, string> = {
@@ -76,6 +76,11 @@ export function parseCliChunk(raw: string): ParsedCliChunk[] {
             id: typeof part.id === 'string' ? part.id : undefined,
             name: part.tool,
             status: typeof part.state?.status === 'string' ? part.state.status : undefined,
+            // Tool arguments (file path, content, old/new strings, …) — needed
+            // to mirror real file writes into the editor as they happen.
+            input: part.state?.input && typeof part.state.input === 'object'
+              ? (part.state.input as Record<string, unknown>)
+              : undefined,
           },
         });
         continue;
@@ -92,7 +97,55 @@ export function parseCliChunk(raw: string): ParsedCliChunk[] {
   }
 
   // Drop label-only entries that carry no information
-  return results.filter((r) => r.text !== undefined || r.error !== undefined || r.sessionId !== undefined);
+  return results.filter((r) => r.text !== undefined || r.error !== undefined || r.sessionId !== undefined || r.tool !== undefined);
+}
+
+/** A real file mutation performed by an agent tool. */
+export interface AgentWriteInfo {
+  kind: 'write' | 'edit';
+  /** Absolute or workspace-relative path the agent is writing. */
+  path: string;
+  /** Full file content for `write` tools. */
+  content?: string;
+  /** Replacement pair for `edit` tools. */
+  oldString?: string;
+  newString?: string;
+}
+
+const WRITE_TOOL_RE = /^(write|create|write_file|create_file|writefile)$/;
+const EDIT_TOOL_RE = /^(edit|edit_file|multiedit|str_replace|replace|apply_patch|patch)$/;
+
+/**
+ * Extracts the file mutation a CLI tool call performs, if any.
+ * Handles the shapes OpenCode (`write`/`edit`) and Claude Code
+ * (`Write`/`Edit`, snake_case args) actually emit.
+ */
+export function extractAgentWrite(tool: { name?: string; input?: Record<string, unknown> }): AgentWriteInfo | null {
+  if (!tool?.name || !tool.input) return null;
+  const name = tool.name.toLowerCase();
+  const input = tool.input;
+
+  const path = [input.path, input.filePath, input.file_path, input.absolutePath]
+    .find((v): v is string => typeof v === 'string' && v.length > 0);
+  if (!path) return null;
+
+  if (WRITE_TOOL_RE.test(name)) {
+    const content = [input.content, input.file_text, input.text]
+      .find((v): v is string => typeof v === 'string');
+    if (typeof content !== 'string') return null;
+    return { kind: 'write', path, content };
+  }
+
+  if (EDIT_TOOL_RE.test(name)) {
+    const oldString = [input.oldString, input.old_string, input.old_text]
+      .find((v): v is string => typeof v === 'string');
+    const newString = [input.newString, input.new_string, input.new_text]
+      .find((v): v is string => typeof v === 'string');
+    if (typeof oldString !== 'string' || typeof newString !== 'string') return null;
+    return { kind: 'edit', path, oldString, newString };
+  }
+
+  return null;
 }
 
 /** Builds the CLI arguments that continue an existing OpenCode session. */

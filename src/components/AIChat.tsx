@@ -9,7 +9,7 @@ import { useAppStore } from '@/stores/appStore';
 import type { LocalCLIDetected, ChatSession } from '@/types';
 import { brainClient } from '@/services/brainClient';
 import { toWorkspaceRelative } from '@/utils/workspacePath';
-import { parseCliChunk, opencodeRunArgs, opencodeModelOverride, deriveChatTitle } from '@/utils/opencodeStream';
+import { parseCliChunk, opencodeRunArgs, opencodeModelOverride, deriveChatTitle, extractAgentWrite } from '@/utils/opencodeStream';
 import { ChatMessage, ToolCall, ProviderConfig, ApprovalRequest } from '@/types/index';
 import { AGENT_TOOLS } from '@/utils/providers';
 
@@ -65,6 +65,7 @@ export const AIChat: React.FC = () => {
   const renameChat = useAppStore((s) => s.renameChat);
   const setActiveChatMessages = useAppStore((s) => s.setActiveChatMessages);
   const setChatCliSession = useAppStore((s) => s.setChatCliSession);
+  const startLiveWrite = useAppStore((s) => s.startLiveWrite);
 
   // Agent panel width (drag-resizable in App; the button here expands it)
   const chatPanelWidth = useAppStore((s) => s.chatPanelWidth);
@@ -575,6 +576,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     let textMsgId: string | null = null;
     let textSeq = 0;
     const toolMsgIds = new Map<string, string>();
+    /** Tool calls whose file write was already mirrored into the editor. */
+    const handledWrites = new Set<string>();
 
     const flush = () => {
       cliFlushTimerRef.current = null;
@@ -640,6 +643,30 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             cliStreamBufferRef.current = '';
             textMsgId = null;
             upsertToolMessage(parsed.tool);
+
+            // A real file write: open the file in the editor and mirror the
+            // code as it is written, instead of only reporting the tool call.
+            const callKey = parsed.tool.id || `${parsed.tool.name}-${parsed.tool.status}`;
+            if (!handledWrites.has(callKey)) {
+              const write = extractAgentWrite(parsed.tool);
+              if (write) {
+                handledWrites.add(callKey);
+                const absPath = write.path.startsWith('/')
+                  ? write.path
+                  : `${(workspacePath || '').replace(/\/+$/, '')}/${write.path.replace(/^\/+/, '')}`;
+                startLiveWrite({
+                  agentId: `agent-${agent.id}`,
+                  agentName: agent.name,
+                  color: agent.color || '#ffa94d',
+                  path: absPath,
+                  fileName: absPath.split('/').pop() || write.path,
+                  kind: write.kind,
+                  content: write.content,
+                  oldString: write.oldString,
+                  newString: write.newString,
+                });
+              }
+            }
           }
           if (parsed.text) {
             openTextMessage();

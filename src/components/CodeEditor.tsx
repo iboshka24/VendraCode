@@ -15,7 +15,8 @@ export function CodeEditor() {
   const {
     openTabs, activeTabId, setActiveTab, closeTab,
     updateTabContent, markTabClean, workspacePath, setWorkspacePath,
-    setFileTree, setActiveView, toggleChat, settings, remoteEdits
+    setFileTree, setActiveView, toggleChat, settings, remoteEdits,
+    openFile, setTabContentLive, applyRemoteEdit, liveWrite, endLiveWrite
   } = useAppStore();
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
@@ -27,6 +28,8 @@ export function CodeEditor() {
   const heldLockPathRef = useRef<string | null>(null);
   /** Counts programmatic content applications that must not be echoed to peers. */
   const suppressBroadcastRef = useRef(0);
+  /** True while the agent live-write animation drives the model. */
+  const agentWritingRef = useRef(false);
   /** Latest active tab, readable from the (memoized) Monaco mount callback. */
   const activeTabRef = useRef<any>(null);
 
@@ -66,6 +69,9 @@ export function CodeEditor() {
         suppressBroadcastRef.current -= 1;
         return;
       }
+
+      // The agent live-write animation is not a user edit.
+      if (agentWritingRef.current) return;
 
       // Only real, user-driven edits should reach teammates.
       if (!editor.hasTextFocus()) return;
@@ -221,6 +227,130 @@ export function CodeEditor() {
 
     renderRemoteStyles(edits.map((edit) => ({ agentId: edit.agentId, color: edit.color })));
   }, [remoteEdits, activeTab]);
+
+  // ── Agent live-write: open the file and reveal code as it is written ────
+  // Triggered by real `write`/`edit` tool calls from a running CLI agent.
+  // The agent's own tool message in the chat shows the call; here the file it
+  // touches becomes visible and fills in progressively.
+  useEffect(() => {
+    if (!liveWrite) return;
+    const { path: filePath, fileName, kind, content, oldString, newString } = liveWrite;
+    let cancelled = false;
+    let finished = false;
+    let rafId = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const applyContent = (text: string) => {
+      const editor = editorRef.current;
+      const model = editor?.getModel?.();
+      const modelPath: string = model?.uri?.path || '';
+      // While the written file is on screen, drive Monaco directly: no React
+      // re-render per frame, and the animation stays smooth on big files.
+      if (model && modelPath.endsWith(filePath)) {
+        model.setValue(text);
+      } else {
+        setTabContentLive(filePath, text);
+      }
+    };
+
+    const decorate = (startLine: number, endLine: number) => {
+      applyRemoteEdit({
+        agentId: liveWrite.agentId,
+        agentName: liveWrite.agentName,
+        color: liveWrite.color,
+        filePath: toWorkspaceRelative(filePath, workspacePathRef.current),
+        changes: [{
+          range: { startLineNumber: startLine, startColumn: 1, endLineNumber: Math.max(startLine, endLine), endColumn: 1 },
+          text: '',
+          rangeLength: 0,
+        }],
+        timestamp: Date.now(),
+      });
+    };
+
+    const run = async () => {
+      // Never clobber unsaved user edits in the same file.
+      const existing = useAppStore.getState().openTabs.find((t) => t.path === filePath);
+      if (existing?.isDirty) return;
+
+      agentWritingRef.current = true;
+      let before = '';
+      try { before = (await window.vendraAPI.fs.readFile(filePath)) || ''; } catch { before = ''; }
+      if (cancelled) return;
+
+      // Focus the file so the user sees it happen.
+      openFile(filePath, fileName, before);
+      setTabContentLive(filePath, before);
+
+      if (kind === 'edit') {
+        if (typeof oldString !== 'string' || typeof newString !== 'string') return;
+        const idx = before.indexOf(oldString);
+        const after = idx >= 0 ? before.replace(oldString, newString) : before + (before.endsWith('\n') || !before ? '' : '\n') + newString;
+        applyContent(after);
+        setTabContentLive(filePath, after);
+        markTabClean(filePath);
+        const line = Math.max(1, (idx >= 0 ? before.slice(0, idx) : before).split('\n').length);
+        decorate(line, line + newString.split('\n').length);
+        // The disk copy is the source of truth — re-sync right after.
+        timeoutId = setTimeout(async () => {
+          try {
+            const real = await window.vendraAPI.fs.readFile(filePath);
+            setTabContentLive(filePath, real);
+            markTabClean(filePath);
+          } catch { /* file vanished — leave as is */ }
+          agentWritingRef.current = false;
+          endLiveWrite();
+        }, 1000);
+        return;
+      }
+
+      // `write`: reveal from the unchanged prefix so untouched top matter
+      // isn't retyped, then stream the rest in like a fast typist.
+      const target = typeof content === 'string' ? content : before;
+      let prefix = 0;
+      const minLen = Math.min(before.length, target.length);
+      while (prefix < minLen && before[prefix] === target[prefix]) prefix += 1;
+      const nl = target.lastIndexOf('\n', prefix);
+      prefix = nl >= 0 ? nl + 1 : 0;
+
+      const durationMs = Math.min(2600, Math.max(650, (target.length - prefix) * 3));
+      const startedAt = performance.now();
+      const tick = () => {
+        if (cancelled) return;
+        const t = Math.min(1, (performance.now() - startedAt) / durationMs);
+        applyContent(target.slice(0, prefix + Math.floor((target.length - prefix) * t)));
+        if (t < 1) {
+          rafId = requestAnimationFrame(tick);
+          return;
+        }
+        finished = true;
+        applyContent(target);
+        setTabContentLive(filePath, target);
+        markTabClean(filePath);
+        decorate(
+          Math.max(1, target.slice(0, prefix).split('\n').length),
+          target.split('\n').length
+        );
+        agentWritingRef.current = false;
+        // Keep the "⌁ … live edit" badge visible for a moment, then clear it.
+        timeoutId = setTimeout(() => endLiveWrite(), 1500);
+      };
+      rafId = requestAnimationFrame(tick);
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+      agentWritingRef.current = false;
+      cancelAnimationFrame(rafId);
+      if (timeoutId) clearTimeout(timeoutId);
+      // Interrupted by another write / tab close: land on the real content.
+      if (!finished && typeof content === 'string') {
+        setTabContentLive(filePath, content);
+        markTabClean(filePath);
+      }
+    };
+  }, [liveWrite, openFile, setTabContentLive, applyRemoteEdit, markTabClean, endLiveWrite]);
 
   // Save on Ctrl+S globally
   useEffect(() => {

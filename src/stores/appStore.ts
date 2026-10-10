@@ -85,6 +85,23 @@ const resolveActiveProvider = (): ProviderConfig => {
   return settings.providers[0];
 };
 
+/** A file mutation an agent is performing, mirrored into the editor live. */
+export interface LiveWrite {
+  /** Stable id for decorations (must not equal the local brain peer id). */
+  agentId: string;
+  agentName: string;
+  color: string;
+  /** Absolute path of the file being written. */
+  path: string;
+  fileName: string;
+  kind: 'write' | 'edit';
+  /** Full content for `write`. */
+  content?: string;
+  /** Replacement pair for `edit`. */
+  oldString?: string;
+  newString?: string;
+}
+
 interface AppState {
   // View
   activeView: 'editor' | 'mission-control' | 'settings';
@@ -107,6 +124,12 @@ interface AppState {
   setActiveTab: (id: string) => void;
   updateTabContent: (id: string, content: string) => void;
   markTabClean: (id: string) => void;
+  /** Applies programmatic content (agent writes) without flagging the tab dirty. */
+  setTabContentLive: (id: string, content: string) => void;
+  /** Set while an agent is writing a file, so the editor can mirror it live. */
+  liveWrite: (LiveWrite & { startedAt: number }) | null;
+  startLiveWrite: (write: LiveWrite) => void;
+  endLiveWrite: () => void;
 
   // AI Chat (persisted sessions)
   chatSessions: ChatSession[];
@@ -275,6 +298,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({
       openTabs: s.openTabs.map((t) => (t.id === id ? { ...t, isDirty: false } : t)),
     })),
+  setTabContentLive: (id, content) =>
+    set((s) => ({
+      openTabs: s.openTabs.map((t) => (t.id === id ? { ...t, content, isDirty: false } : t)),
+    })),
+  liveWrite: null,
+  startLiveWrite: (write) =>
+    set({
+      liveWrite: { ...write, startedAt: Date.now() },
+      // Make sure the user can actually watch it happen.
+      activeView: 'editor',
+    }),
+  endLiveWrite: () => set({ liveWrite: null }),
 
   // AI Chat (persisted sessions; everything is written to localStorage)
   chatSessions: INITIAL_CHATS,

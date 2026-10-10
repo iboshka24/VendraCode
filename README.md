@@ -27,6 +27,7 @@ VendraCode is an open-source, multiplayer AI-native development environment (IDE
 - 🌳 **Git Worktree Switcher** — Switch or create isolated session worktrees from the status bar; every agent works its own branch without conflicts
 - 🤖 **Local Agent CLIs Support** — Real child processes for **OpenCode**, **Claude Code**, **Cline**, **Antigravity CLI**: version-verified detection, streamed stdout/stderr into chat, real exit codes, Stop button, no hardcoded paths. Every tool call the agent makes gets its **own message** (name + live status); free OpenCode Zen models work out of the box
 - ↔️ **Resizable Agent Panel** — Drag the panel's left edge (double-click resets) or hit the expand button to widen the chat; the width persists across restarts
+- 👀 **Watch the Agent Write** — When an agent creates or edits a file, the file opens in the editor and the code streams in live, with the changed lines highlighted and a `⌁ <agent> · live edit` badge — you see the code being written, not just a "done" message
 - ⚠️ **Overlap Warnings & Advisory Locks** — Surfaces potential work duplication or file conflicts between running agents before conflicts occur
 - ⚡ **Built-in AI Coding Agent** — OpenCode-style tool-calling loop that creates, edits, and deletes files, executes terminal commands, and searches code
 - 🔌 **Multi-Provider LLM Support** — Works with OpenAI, Anthropic, NVIDIA NIM, and any OpenAI-compatible API
