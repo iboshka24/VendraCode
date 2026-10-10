@@ -16,6 +16,11 @@ export interface ParsedCliChunk {
   sessionId?: string;
   /** Fatal error surfaced by the CLI. */
   error?: string;
+  /**
+   * A tool call/status update emitted by the CLI. Rendered as its own compact
+   * message instead of being glued into the surrounding text.
+   */
+  tool?: { id?: string; name: string; status?: string };
 }
 
 const EVENT_LABELS: Record<string, string> = {
@@ -65,8 +70,14 @@ export function parseCliChunk(raw: string): ParsedCliChunk[] {
         continue;
       }
       if (part.type === 'tool' && typeof part.tool === 'string') {
-        const state = part.state?.status ? ` (${part.state.status})` : '';
-        results.push({ sessionId, text: `\n[tool] ${part.tool}${state}\n` });
+        results.push({
+          sessionId,
+          tool: {
+            id: typeof part.id === 'string' ? part.id : undefined,
+            name: part.tool,
+            status: typeof part.state?.status === 'string' ? part.state.status : undefined,
+          },
+        });
         continue;
       }
       continue;

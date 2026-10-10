@@ -25,7 +25,8 @@ VendraCode is an open-source, multiplayer AI-native development environment (IDE
 - 🧠 **The Shared Brain (Cloudflare Edge)** — Real-time WebSocket coordination at `brain.vendra.uz/ws`: live Monaco diff broadcast, file locks, peer presence and the shared GitHub repo link
 - 🤝 **Multiplayer Live Co-editing** — Teammates' `onDidChangeModelContent` edits (and agent file writes) stream into the editor as colored line highlights, gutter markers and `⌁ <name> · live edit` badges, with auto-reconnect backoff
 - 🌳 **Git Worktree Switcher** — Switch or create isolated session worktrees from the status bar; every agent works its own branch without conflicts
-- 🤖 **Local Agent CLIs Support** — Real child processes for **OpenCode**, **Claude Code**, **Cline**, **Antigravity CLI**: version-verified detection, streamed stdout/stderr into chat, real exit codes, Stop button, no hardcoded paths
+- 🤖 **Local Agent CLIs Support** — Real child processes for **OpenCode**, **Claude Code**, **Cline**, **Antigravity CLI**: version-verified detection, streamed stdout/stderr into chat, real exit codes, Stop button, no hardcoded paths. Every tool call the agent makes gets its **own message** (name + live status); free OpenCode Zen models work out of the box
+- ↔️ **Resizable Agent Panel** — Drag the panel's left edge (double-click resets) or hit the expand button to widen the chat; the width persists across restarts
 - ⚠️ **Overlap Warnings & Advisory Locks** — Surfaces potential work duplication or file conflicts between running agents before conflicts occur
 - ⚡ **Built-in AI Coding Agent** — OpenCode-style tool-calling loop that creates, edits, and deletes files, executes terminal commands, and searches code
 - 🔌 **Multi-Provider LLM Support** — Works with OpenAI, Anthropic, NVIDIA NIM, and any OpenAI-compatible API

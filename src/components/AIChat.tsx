@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Send, Bot, User, Loader2, Wrench, X, Settings, ChevronDown, MessageSquare, Plus, Trash2, 
   Sparkles, Square, Globe, Camera, Cpu, Terminal, ExternalLink,
-  Search, CheckCircle2, AlertCircle, FileCode, Check, Layers, Play
+  Search, CheckCircle2, AlertCircle, FileCode, Check, Layers, Play, Maximize2, Minimize2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/stores/appStore';
@@ -65,6 +65,20 @@ export const AIChat: React.FC = () => {
   const renameChat = useAppStore((s) => s.renameChat);
   const setActiveChatMessages = useAppStore((s) => s.setActiveChatMessages);
   const setChatCliSession = useAppStore((s) => s.setChatCliSession);
+
+  // Agent panel width (drag-resizable in App; the button here expands it)
+  const chatPanelWidth = useAppStore((s) => s.chatPanelWidth);
+  const setChatPanelWidth = useAppStore((s) => s.setChatPanelWidth);
+  const prevChatWidthRef = useRef<number | null>(null);
+  const isWideChat = chatPanelWidth > Math.min(window.innerWidth * 0.45, 620);
+  const toggleWideChat = () => {
+    if (isWideChat) {
+      setChatPanelWidth(prevChatWidthRef.current || 380);
+    } else {
+      prevChatWidthRef.current = chatPanelWidth;
+      setChatPanelWidth(Math.round(window.innerWidth * 0.55));
+    }
+  };
 
   const activeChat: ChatSession | undefined =
     chatSessions.find((c) => c.id === activeChatId) || chatSessions[0];
@@ -547,27 +561,58 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       role: 'assistant',
       id: messageId,
       timestamp: startedAt,
-      content: `⚡ **${agent.name}** running in \`${cliBin}\`\n\nWorkspace: \`${workspacePath || '—'}\`\n\n\`\`\`\n(starting…)`,
+      content: `⚡ **${agent.name}** running in \`${cliBin}\`\n\nWorkspace: \`${workspacePath || '—'}\`\n\n⏳ running…`,
     };
     setMessages([...baseMessages, seedMessage]);
     setAgentStatus?.('running');
 
     // ── stream plumbing ───────────────────────────────────────────
+    // Every streamed text segment and every tool call becomes its own
+    // message, in the order the CLI produced them. Repeats of the same tool
+    // call (running → completed) update that call's message in place.
     let closed = false;
     let exitCode: number | null = null;
+    let textMsgId: string | null = null;
+    let textSeq = 0;
+    const toolMsgIds = new Map<string, string>();
 
     const flush = () => {
       cliFlushTimerRef.current = null;
       const body = cliStreamBufferRef.current;
-      if (!body) return;
+      if (!body || !textMsgId) return;
       const trimmed = body.length > 6000 ? `…${body.slice(-5600)}` : body;
-      setMessages(prev => prev.map(m => (m.id === messageId
-        ? { ...m, content: `${seedMessage.content}\n${trimmed}\n\`\`\`` }
-        : m)));
+      setMessages(prev => prev.map(m => (m.id === textMsgId ? { ...m, content: trimmed } : m)));
     };
     const scheduleFlush = () => {
       if (cliFlushTimerRef.current) return;
       cliFlushTimerRef.current = setTimeout(flush, 120);
+    };
+    /** Opens a fresh assistant bubble for text that follows a tool call. */
+    const openTextMessage = () => {
+      if (textMsgId) return;
+      textSeq += 1;
+      textMsgId = `cli-text-${startedAt}-${textSeq}`;
+      const id = textMsgId;
+      setMessages(prev => [...prev, { role: 'assistant', id, timestamp: Date.now(), content: '…' }]);
+    };
+    /** One compact message per tool call; a later status updates the same row. */
+    const upsertToolMessage = (call: { id?: string; name: string; status?: string }) => {
+      const key = call.id || `${call.name}-${toolMsgIds.size}`;
+      const content = JSON.stringify({ cliTool: true, status: call.status || '' });
+      const existing = toolMsgIds.get(key);
+      if (existing) {
+        setMessages(prev => prev.map(m => (m.id === existing ? { ...m, content } : m)));
+        return;
+      }
+      const id = `cli-tool-${startedAt}-${toolMsgIds.size + 1}`;
+      toolMsgIds.set(key, id);
+      setMessages(prev => [...prev, {
+        role: 'tool' as const,
+        id,
+        timestamp: Date.now(),
+        toolName: call.name,
+        content,
+      }]);
     };
 
     const chatId = activeChat?.id;
@@ -575,16 +620,34 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     const detachOutput = api.cli.onAgentOutput((chunk) => {
       if (chunk.agentId !== agentId) return;
 
-      // OpenCode prints NDJSON events: extract readable text and the session id.
+      // OpenCode prints NDJSON events: readable text, tool calls, session id.
       if (agent.id === 'opencode') {
         for (const parsed of parseCliChunk(chunk.text || '')) {
           if (parsed.sessionId && chatId && parsed.sessionId !== activeChat?.opencodeSessionId) {
             setChatCliSession(chatId, parsed.sessionId);
           }
-          if (parsed.error) cliStreamBufferRef.current += `\n\n⚠️ ${parsed.error}\n`;
-          if (parsed.text) cliStreamBufferRef.current += parsed.text;
+          if (parsed.error) {
+            setMessages(prev => [...prev, {
+              role: 'system' as const,
+              id: `cli-err-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              timestamp: Date.now(),
+              content: `⚠️ ${parsed.error}`,
+            }]);
+          }
+          if (parsed.tool) {
+            // Finish the current text bubble so the tool lands between segments.
+            flush();
+            cliStreamBufferRef.current = '';
+            textMsgId = null;
+            upsertToolMessage(parsed.tool);
+          }
+          if (parsed.text) {
+            openTextMessage();
+            cliStreamBufferRef.current += parsed.text;
+          }
         }
       } else {
+        openTextMessage();
         cliStreamBufferRef.current += chunk.text || '';
       }
       scheduleFlush();
@@ -647,9 +710,9 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       cliDetachRef.current.push(() => clearInterval(poll));
     });
 
-    // Read the streamed body BEFORE cleanupCliRun() — it clears the buffer,
-    // and reading it afterwards silently discarded everything the CLI said.
-    const body = cliStreamBufferRef.current.trim();
+    // Flush any pending text into its own bubble first — cleanupCliRun()
+    // clears the buffer, so the streamed body must be written before it.
+    flush();
     if (cliFlushTimerRef.current) { clearTimeout(cliFlushTimerRef.current); cliFlushTimerRef.current = null; }
     cleanupCliRun();
     setRunningAgent(null);
@@ -659,12 +722,11 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     const verdict = (exitCode === 0)
       ? `✅ exit 0 · ${seconds}s`
       : `❌ exit ${exitCode ?? '?'} · ${seconds}s`;
-    const tail = body && !seedMessage.content.includes(body.slice(0, 40))
-      ? `\n\n\`\`\`\n${body.length > 6000 ? `…${body.slice(-5600)}` : body}\n\`\`\``
-      : '';
 
+    // The streamed text and tool calls live in their own messages now; the
+    // seed card only swaps its "running…" line for the verdict.
     setMessages(prev => prev.map(m => (m.id === messageId
-      ? { ...m, content: `${seedMessage.content}${tail}\n\n${verdict}` }
+      ? { ...m, content: seedMessage.content.replace('⏳ running…', verdict) }
       : m)));
 
     // Real side effect: the workspace watcher refreshes the explorer for us.
@@ -989,6 +1051,16 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             </div>
           )}
         </div>
+
+        {/* Widen / restore the agent panel (the left edge is also draggable) */}
+        <button
+          type="button"
+          onClick={toggleWideChat}
+          className="agentpill shrink-0"
+          title={isWideChat ? 'Restore the panel width' : 'Expand the agent panel (or drag its left edge)'}
+        >
+          {isWideChat ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+        </button>
       </div>
 
       {/* ─── Chat Messages Stream ─── */}
@@ -1090,6 +1162,36 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
               let parsed: any = {};
               try { parsed = JSON.parse(msg.content); } catch (e) {}
               const isExpanded = expandedToolMsgId === msg.id;
+
+              // 0. CLI agent tool call (OpenCode / Claude Code / …)
+              if (parsed.cliTool) {
+                const status = String(parsed.status || '');
+                const done = status === 'completed';
+                const failed = status === 'error';
+                return (
+                  <motion.div
+                    key={msg.id}
+                    initial={{ opacity: 0, scale: 0.97 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex justify-start ml-8"
+                  >
+                    <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-chip border border-border px-2.5 py-1 rounded-md">
+                      {failed
+                        ? <AlertCircle className="w-3 h-3 text-danger" />
+                        : done
+                          ? <CheckCircle2 className="w-3 h-3 text-success" />
+                          : <Loader2 className="w-3 h-3 animate-spin text-accent" />}
+                      <Wrench className="w-3 h-3 text-accent" />
+                      <span className="font-mono text-text-primary">{msg.toolName}</span>
+                      {status && (
+                        <span className={`text-[9px] uppercase ${failed ? 'text-danger' : done ? 'text-success' : 'text-text-muted'}`}>
+                          {status}
+                        </span>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              }
 
               // 1. Hermes Web Search Tool Card
               if (msg.toolName === 'web_search') {

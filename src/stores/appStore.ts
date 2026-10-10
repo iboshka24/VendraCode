@@ -121,6 +121,9 @@ interface AppState {
   setChatCliSession: (chatId: string, sessionId?: string) => void;
   isChatOpen: boolean;
   toggleChat: () => void;
+  /** Width of the agent panel in px (drag-resizable, persisted). */
+  chatPanelWidth: number;
+  setChatPanelWidth: (w: number) => void;
 
   // Active provider
   activeProvider: ProviderConfig;
@@ -338,6 +341,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
   isChatOpen: true,
   toggleChat: () => set((s) => ({ isChatOpen: !s.isChatOpen })),
+  chatPanelWidth: (() => {
+    try {
+      const saved = Number(localStorage.getItem('vendracode-chat-width'));
+      if (Number.isFinite(saved) && saved >= 320) return Math.round(saved);
+    } catch { /* storage unavailable */ }
+    return 380;
+  })(),
+  setChatPanelWidth: (w) => {
+    // Keep the editor usable: never let the panel eat the whole window.
+    const max = Math.max(360, window.innerWidth - 420);
+    const clamped = Math.round(Math.min(Math.max(w, 320), max));
+    try { localStorage.setItem('vendracode-chat-width', String(clamped)); } catch { /* ignore */ }
+    set({ chatPanelWidth: clamped });
+  },
 
   // Active provider
   activeProvider: resolveActiveProvider(),

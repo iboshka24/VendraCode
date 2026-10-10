@@ -7,7 +7,7 @@ import { TerminalPanel } from '@/components/Terminal';
 import { SearchModal } from '@/components/SearchModal';
 import { ShareSessionModal } from '@/components/ShareSessionModal';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useEffect, lazy, Suspense } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 
 // Lazy-load heavier panels
 const FileExplorer = lazy(() => import('@/components/FileExplorer').then(m => ({ default: m.FileExplorer })));
@@ -30,6 +30,8 @@ function App() {
   const {
     activeView,
     isChatOpen,
+    chatPanelWidth,
+    setChatPanelWidth,
     workspacePath,
     setWorkspacePath,
     setFileTree,
@@ -42,6 +44,10 @@ function App() {
     setBrainSessionId,
     setBrainRepoUrl,
   } = useAppStore();
+
+  // True while the user drags the agent panel's edge (disables the width
+  // animation so the drag tracks the cursor 1:1).
+  const [isResizingChat, setIsResizingChat] = useState(false);
 
   // Cloudflare Edge Brain multiplayer sync (brain.vendra.uz/ws)
   useBrainSync();
@@ -163,16 +169,35 @@ function App() {
                 <TerminalPanel />
               </div>
 
-              {/* AI Chat Panel */}
+              {/* AI Chat Panel (drag its left edge to resize, double-click resets) */}
               <AnimatePresence>
                 {isChatOpen && (
                   <motion.div
                     initial={{ width: 0, opacity: 0 }}
-                    animate={{ width: 380, opacity: 1 }}
+                    animate={{ width: chatPanelWidth, opacity: 1 }}
                     exit={{ width: 0, opacity: 0 }}
-                    transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="border-l border-border overflow-hidden shrink-0"
+                    transition={{ duration: isResizingChat ? 0 : 0.2, ease: 'easeOut' }}
+                    className="relative border-l border-border overflow-hidden shrink-0"
                   >
+                    <div
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setIsResizingChat(true);
+                        const startX = e.clientX;
+                        const startW = chatPanelWidth;
+                        const onMove = (ev: MouseEvent) => setChatPanelWidth(startW + (startX - ev.clientX));
+                        const onUp = () => {
+                          setIsResizingChat(false);
+                          window.removeEventListener('mousemove', onMove);
+                          window.removeEventListener('mouseup', onUp);
+                        };
+                        window.addEventListener('mousemove', onMove);
+                        window.addEventListener('mouseup', onUp);
+                      }}
+                      onDoubleClick={() => setChatPanelWidth(380)}
+                      title="Drag to resize · double-click to reset"
+                      className="absolute left-0 top-0 bottom-0 w-1.5 -ml-0.5 cursor-col-resize z-20 hover:bg-accent/40 active:bg-accent/60 transition-colors"
+                    />
                     <Suspense fallback={<LoadingFallback />}>
                       <AIChat />
                     </Suspense>
