@@ -126,6 +126,9 @@ export const AIChat: React.FC = () => {
     startedAt: number;
   } | null>(null);
   const cliStreamBufferRef = useRef('');
+  /** Stop plumbing for the native (Vendra AI) agent loop. */
+  const nativeStopRef = useRef(false);
+  const nativeAbortRef = useRef<AbortController | null>(null);
   const cliFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cliDetachRef = useRef<Array<() => void>>([]);
   const cliTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -405,6 +408,11 @@ export const AIChat: React.FC = () => {
       return;
     }
 
+    // The Stop button flips these: the current request aborts and the loop
+    // refuses to start the next turn.
+    nativeStopRef.current = false;
+    nativeAbortRef.current = new AbortController();
+
     try {
       const systemMessage: ChatMessage = {
         id: 'system',
@@ -429,6 +437,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       const MAX_TURNS = 10;
 
       while (keepRunning && turns < MAX_TURNS) {
+        if (nativeStopRef.current) { keepRunning = false; break; }
         turns++;
         const apiMessages = [systemMessage, ...currentMsgs].map(m => ({
           role: m.role,
@@ -452,6 +461,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
 
         const response = await fetch(`${activeProvider.baseUrl}/chat/completions`, {
           method: 'POST',
+          signal: nativeAbortRef.current?.signal,
           headers: {
             'Content-Type': 'application/json',
             ...(activeProvider.apiKey ? { 'Authorization': `Bearer ${activeProvider.apiKey}` } : {})
@@ -502,11 +512,25 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
         }
       }
     } catch (err: any) {
+      // The Stop button aborts the in-flight request — not an error; the
+      // trailing note below reports the stop.
+      if (!(err?.name === 'AbortError' || nativeStopRef.current)) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          id: Date.now().toString(),
+          timestamp: Date.now(),
+          content: `⚠️ Error executing agent: ${err.message}`
+        }]);
+      }
+    } finally {
+      nativeAbortRef.current = null;
+    }
+    if (nativeStopRef.current) {
       setMessages(prev => [...prev, {
-        role: 'assistant',
-        id: Date.now().toString(),
+        role: 'system',
+        id: `sys-stop-${Date.now()}`,
         timestamp: Date.now(),
-        content: `⚠️ Error executing agent: ${err.message}`
+        content: '⏹ **Stopped by user.**',
       }]);
     }
   };
@@ -1735,10 +1759,11 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             ) : agentStatus === 'running' ? (
               <button
                 type="button"
-                disabled
-                className="btn btn-ghost h-7 w-7 p-0 rounded-lg text-text-muted"
+                onClick={() => { nativeStopRef.current = true; nativeAbortRef.current?.abort(); }}
+                className="btn btn-ghost h-7 w-7 p-0 rounded-lg text-danger hover:bg-danger/15"
+                title="Stop the agent"
               >
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Square className="w-3.5 h-3.5 fill-current" />
               </button>
             ) : (
               <button

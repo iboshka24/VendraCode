@@ -568,6 +568,16 @@ function cliSearchDirs() {
   ];
 }
 
+/** Every filesystem location a CLI would be probed at (diagnostics + search). */
+function cliCandidatePaths(binName) {
+  const exts = IS_WIN && !path.extname(binName) ? ['', ...windowsExts()] : [''];
+  const list = [];
+  for (const dir of cliSearchDirs()) {
+    for (const ext of exts) list.push(path.join(dir, binName + ext));
+  }
+  return list;
+}
+
 /**
  * Locates an agent CLI binary: PATH first (`where`/`which`), then the usual
  * per-user install folders. Windows-aware — the old version only knew unix
@@ -585,12 +595,8 @@ function resolveCliBinary(binName) {
   } catch { /* not on PATH — fall through to the well-known folders */ }
 
   // 2. Well-known install folders, honouring PATHEXT on Windows.
-  const exts = IS_WIN && !path.extname(binName) ? ['', ...windowsExts()] : [''];
-  for (const dir of cliSearchDirs()) {
-    for (const ext of exts) {
-      const candidate = path.join(dir, binName + ext);
-      try { if (fs.existsSync(candidate)) return candidate; } catch { /* unreadable */ }
-    }
+  for (const candidate of cliCandidatePaths(binName)) {
+    try { if (fs.existsSync(candidate)) return candidate; } catch { /* unreadable */ }
   }
   return null;
 }
@@ -608,14 +614,35 @@ function quoteForCmd(arg) {
   return '"' + a + '"';
 }
 
+/**
+ * Kills an agent's whole process tree. The agent is spawned in its own
+ * process group, so a negative PID reaches bash/npm wrappers and every child
+ * they spawned — a bare `child.kill()` would orphan them.
+ */
+function killProcessTree(child, signal = 'SIGTERM') {
+  const pid = child.pid;
+  if (!pid) return;
+  if (IS_WIN) {
+    try {
+      require('child_process').spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    } catch { /* fall back below */ }
+    try { child.kill(signal); } catch { /* already gone */ }
+    return;
+  }
+  try { process.kill(-pid, signal); return; } catch { /* no group — direct child */ }
+  try { child.kill(signal); } catch { /* already gone */ }
+}
+
 /** Spawns an agent CLI; `.cmd`/`.bat` shims go through cmd.exe on Windows. */
 function spawnCli(cliBin, args, options = {}) {
+  // Own process group so Stop can take down wrappers + children.
+  const group = { detached: true, windowsHide: true };
   if (IS_WIN && /\.(cmd|bat)$/i.test(cliBin)) {
     const comspec = process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
     const line = [cliBin, ...args].map(quoteForCmd).join(' ');
-    return spawn(comspec, ['/d', '/s', '/c', line], { ...options, windowsVerbatimArguments: true });
+    return spawn(comspec, ['/d', '/s', '/c', line], { ...options, ...group, windowsVerbatimArguments: true });
   }
-  return spawn(cliBin, args, options);
+  return spawn(cliBin, args, { ...options, ...group });
 }
 
 /** Runs a CLI to completion and resolves with its stdout (probes/version). */
@@ -637,7 +664,7 @@ function runCliCapture(cliBin, args, { timeoutMs = 12000, maxBytes = 4 * 1024 * 
       fn(value);
     };
     timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      killProcessTree(child, 'SIGKILL');
       finish(reject, new Error(`timeout after ${timeoutMs}ms`));
     }, timeoutMs);
 
@@ -673,7 +700,13 @@ ipcMain.handle('cli:detectAll', async () => {
   return Promise.all(clis.map(async (cli) => {
     const detectedPath = resolveCliBinary(cli.bin);
     if (!detectedPath) {
-      return { id: cli.id, name: cli.name, bin: cli.bin, isInstalled: false, path: null, version: '' };
+      // Surface the exact locations probed so a missed install can be fixed
+      // (or reported) without guessing.
+      return {
+        id: cli.id, name: cli.name, bin: cli.bin,
+        isInstalled: false, path: null, version: '',
+        checked: cliCandidatePaths(cli.bin).slice(0, 24),
+      };
     }
     // A binary that exists but cannot execute (stale wrapper, broken shim) is
     // reported as not installed instead of failing later at spawn time.
@@ -759,17 +792,18 @@ ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cw
 });
 
 ipcMain.handle('cli:stopAgent', async (_event, agentId) => {
-  const child = runningCliProcesses.get(agentId);
-  if (child) {
-    try {
-      child.kill('SIGTERM');
-      runningCliProcesses.delete(agentId);
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
+  const child = runningCliProcesses.get(String(agentId));
+  if (!child) return { success: false, error: 'Agent not found' };
+  try {
+    killProcessTree(child, 'SIGTERM');
+    // Some CLIs trap SIGTERM — escalate so Stop always stops.
+    const escalate = setTimeout(() => killProcessTree(child, 'SIGKILL'), 2500);
+    child.once('close', () => clearTimeout(escalate));
+    runningCliProcesses.delete(String(agentId));
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
-  return { success: false, error: 'Agent not found' };
 });
 
 // ─── Live Dynamic Model Scanner IPC ────────────────────────────────

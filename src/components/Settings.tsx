@@ -198,7 +198,12 @@ export const Settings: React.FC = () => {
                             Connected
                           </span>
                         ) : (
-                          <span className="text-[10px] bg-chip text-text-muted px-2 py-0.5 rounded font-mono">
+                          <span
+                            className="text-[10px] bg-chip text-text-muted px-2 py-0.5 rounded font-mono cursor-help"
+                            title={cli.checked?.length
+                              ? `Проверил эти пути — установи CLI в один из них или добавь в PATH:\n${cli.checked.join('\n')}`
+                              : `${cli.bin} не найден в PATH`}
+                          >
                             Not Found
                           </span>
                         )}

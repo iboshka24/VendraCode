@@ -27,6 +27,7 @@ const HELPERS = [
   extract('IS_WIN'),
   extract('windowsExts'),
   extract('cliSearchDirs'),
+  extract('cliCandidatePaths'),
   extract('resolveCliBinary'),
   extract('quoteForCmd'),
 ].join('\n\n');

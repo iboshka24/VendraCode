@@ -103,6 +103,8 @@ export interface LocalCLIDetected {
   isInstalled: boolean;
   path: string | null;
   version: string;
+  /** When not found: the exact filesystem locations that were probed. */
+  checked?: string[];
 }
 
 export interface BrainLock {

@@ -51,5 +51,10 @@ print(json.dumps({
     "type": "text", "timestamp": 2, "sessionID": session,
     "part": {"type": "text", "text": text},
 }), flush=True)
+
+# Optional long tail: lets suites exercise the Stop button on a live agent.
+delay = float(os.environ.get("FAKE_OPENCODE_DELAY", "0") or 0)
+if delay > 0:
+    time.sleep(delay)
 PY
 exit 0
