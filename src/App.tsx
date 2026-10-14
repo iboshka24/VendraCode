@@ -86,19 +86,37 @@ function App() {
     return () => { offStatus(); offIncoming(); };
   }, [setBotStatus]);
 
-  // Auto-load last workspace or default workspace on start so Explorer isn't blank
+  // Restore the last folder that still exists. Otherwise open the project
+  // the IDE was launched from — never a hardcoded home path from another machine.
   useEffect(() => {
     if (!window.vendraAPI) return;
-    const last = localStorage.getItem('vendracode-workspace') || '/home/ibrohim/VendraCode';
-    if (!workspacePath && last) {
-      setWorkspacePath(last);
-      window.vendraAPI.fs.readDir(last).then((entries) => {
-        if (entries && entries.length > 0) {
-          setFileTree(entries);
+    let cancelled = false;
+
+    const openWorkspace = async (dir: string) => {
+      if (cancelled || useAppStore.getState().workspacePath) return;
+      setWorkspacePath(dir);
+      try {
+        const entries = await window.vendraAPI.fs.readDir(dir);
+        if (!cancelled && entries?.length) setFileTree(entries);
+      } catch { /* explorer stays empty and offers Open Folder */ }
+    };
+
+    (async () => {
+      const saved = localStorage.getItem('vendracode-workspace');
+      if (saved) {
+        const stat = await window.vendraAPI.fs.stat(saved).catch(() => null);
+        if (stat?.isDirectory) {
+          await openWorkspace(saved);
+          return;
         }
-      }).catch(() => {});
-    }
-  }, [workspacePath, setWorkspacePath, setFileTree]);
+        localStorage.removeItem('vendracode-workspace');
+      }
+      const info = await window.vendraAPI.os.userInfo().catch(() => null);
+      if (info?.projectRoot) await openWorkspace(info.projectRoot);
+    })().catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [setWorkspacePath, setFileTree]);
 
   // Initialize Local CLI detection & Brain coordination listeners
   useEffect(() => {

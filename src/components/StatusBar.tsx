@@ -52,7 +52,11 @@ export function StatusBar() {
         <WorktreeSwitcher />
 
         {/* Modified files */}
-        {modifiedCount > 0 ? (
+        {!workspacePath ? (
+          <span className="text-[10px] text-text-hint">No folder</span>
+        ) : gitStatus?.branch === 'none' ? (
+          <span className="text-[10px] text-text-hint">Not a git repo</span>
+        ) : modifiedCount > 0 ? (
           <span className="flex items-center gap-1 text-warning">
             <AlertCircle size={10} />
             {modifiedCount} modified
@@ -61,18 +65,14 @@ export function StatusBar() {
           <span className="text-[10px] text-text-hint">Clean worktree</span>
         )}
 
-        {/* Advisory Locks held by teammates */}
-        {lockCount > 0 && (
-          <span className="flex items-center gap-1 text-warn" title={Object.entries(activeLocks).map(([f, l]) => `${l.agentName} → ${f}`).join('\n')}>
-            <Shield size={10} />
-            {lockCount} locked
-          </span>
-        )}
-
-        {/* Advisory lock policy (what the IDE guarantees, not a live claim) */}
-        <span className="flex items-center gap-1 text-text-hint" title="Files edited by a teammate are locked for you before you touch them">
+        <span
+          className={`flex items-center gap-1 ${lockCount > 0 ? 'text-warning' : 'text-text-hint'}`}
+          title={lockCount > 0
+            ? Object.entries(activeLocks).map(([f, l]) => `${l.agentName} → ${f}`).join('\n')
+            : 'Files a teammate is editing stay locked until they release them'}
+        >
           <Shield size={10} />
-          Locks: {lockCount > 0 ? `${lockCount} active` : 'none'}
+          {lockCount > 0 ? `${lockCount} locked` : 'No locks'}
         </span>
       </div>
 

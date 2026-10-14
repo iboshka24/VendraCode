@@ -10,6 +10,7 @@ export function TerminalPanel() {
   const fitAddonRef = useRef<any>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const initialized = useRef(false);
+  const startedCwdRef = useRef<string | undefined>(undefined);
 
   const initTerminal = useCallback(async () => {
     if (!termRef.current || initialized.current) return;
@@ -23,10 +24,10 @@ export function TerminalPanel() {
 
       const term = new Terminal({
         theme: {
-          background: '#0e0e0e',
-          foreground: '#ececec',
-          cursor: '#ececec',
-          cursorAccent: '#0e0e0e',
+          background: '#0c0c10',
+          foreground: '#f4f4f8',
+          cursor: '#3ee0a8',
+          cursorAccent: '#0c0c10',
           selectionBackground: 'rgba(124, 58, 237, 0.4)',
           black: '#1b1b1b',
           red: '#e5484d',
@@ -63,6 +64,7 @@ export function TerminalPanel() {
 
       // Connect to Electron terminal
       if (window.vendraAPI) {
+        startedCwdRef.current = workspacePath || '';
         window.vendraAPI.terminal.start(workspacePath || undefined);
 
         const removeData = window.vendraAPI.terminal.onData((data) => {
@@ -115,6 +117,15 @@ export function TerminalPanel() {
     }
   }, [workspacePath]);
 
+  // The shell starts before the folder is known. Move it once the workspace resolves.
+  useEffect(() => {
+    if (!initialized.current || !window.vendraAPI?.terminal) return;
+    const next = workspacePath || '';
+    if (startedCwdRef.current === next) return;
+    startedCwdRef.current = next;
+    window.vendraAPI.terminal.start(workspacePath || undefined);
+  }, [workspacePath]);
+
   useEffect(() => {
     if (isTerminalOpen) {
       const timer = setTimeout(initTerminal, 100);
@@ -141,15 +152,12 @@ export function TerminalPanel() {
         >
           {/* Terminal Header */}
           <div className="flex items-center justify-between h-7 px-3 bg-bgtitle border-b border-border shrink-0">
-            <div className="flex items-center gap-1 font-mono text-[11px]">
-              <span className="px-2 py-0.5 text-text-primary font-bold border-b border-pop">
+            <div className="flex items-center gap-2 font-mono text-[11px] min-w-0">
+              <span className="px-2 py-0.5 text-text-primary font-bold border-b border-accent">
                 TERMINAL
               </span>
-              <span className="px-2 py-0.5 text-text-hint hover:text-text-secondary cursor-pointer">
-                PROBLEMS
-              </span>
-              <span className="px-2 py-0.5 text-text-hint hover:text-text-secondary cursor-pointer">
-                COORDINATION LOGS
+              <span className="text-text-muted truncate">
+                {workspacePath ? workspacePath.split(/[\\/]/).filter(Boolean).pop() : 'shell'}
               </span>
             </div>
             <div className="flex items-center gap-1">

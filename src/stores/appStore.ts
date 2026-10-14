@@ -45,7 +45,12 @@ function persistChatSessions(sessions: ChatSession[]): void {
  *  connect → reconnect round trip on boot. */
 const loadBrainSession = (): string => {
   try {
-    return localStorage.getItem('vendracode-session') || 'default-session';
+    const saved = localStorage.getItem('vendracode-session');
+    if (saved) return saved;
+    // A shared "default-session" put every fresh install in one public room.
+    const minted = `desk-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem('vendracode-session', minted);
+    return minted;
   } catch {
     return 'default-session';
   }

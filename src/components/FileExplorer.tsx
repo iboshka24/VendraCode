@@ -167,8 +167,12 @@ export function FileExplorer() {
       </div>
       <div className="flex-1 overflow-y-auto py-1 px-1">
         {fileTree.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-text-muted px-4 text-center">
-            <p className="text-xs mb-3 text-text-secondary">No repository opened</p>
+          <div className="flex flex-col items-center justify-center h-full text-text-muted px-5 text-center">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-chip text-accent">
+              <FolderOpen size={18} />
+            </div>
+            <p className="text-xs mb-1 text-text-secondary">No repository opened</p>
+            <p className="text-[10px] mb-3 leading-relaxed text-text-muted">Choose a folder to browse files, run the terminal, and share the session.</p>
             <button 
               type="button"
               onClick={openFolder}

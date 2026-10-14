@@ -33,7 +33,7 @@ export function TitleBar() {
 
   return (
     <header 
-      className="h-11 border-b border-border flex items-center justify-between px-3 bg-bgtitle shrink-0 select-none z-40"
+      className="h-12 border-b border-border flex items-center justify-between px-3 bg-bgtitle/90 backdrop-blur-md shrink-0 select-none z-40"
       style={{ WebkitAppRegion: 'drag' } as any}
     >
       {/* Left: Brand + Workspace + Nav */}
@@ -41,16 +41,18 @@ export function TitleBar() {
         {/* Brand mark */}
         <div className="flex items-center gap-2 mr-1">
           <VendraLogo size={22} />
-          <span className="font-bold text-text-primary tracking-tight text-xs font-mono">
-            Vendra<strong className="text-ok font-black">Code</strong>
+          <span className="font-semibold text-text-primary tracking-tight text-[13px]">
+            Vendra<span className="text-accent">Code</span>
           </span>
-          <span className="text-[10px] text-text-muted font-mono bg-chip px-1.5 py-0.5 rounded border border-border">
-            {repoName}
-          </span>
+          {repoName && (
+            <span className="text-[10px] text-text-secondary font-mono bg-chip px-1.5 py-0.5 rounded-md border border-border max-w-[140px] truncate">
+              {repoName}
+            </span>
+          )}
         </div>
 
         {/* Nav Tabs */}
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-0.5 p-0.5 rounded-lg bg-black/30 border border-border">
           {[
             { id: 'editor' as const, icon: Code2, label: 'Editor' },
             { id: 'mission-control' as const, icon: Compass, label: 'Mission Control' },
@@ -62,13 +64,13 @@ export function TitleBar() {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveView(tab.id)}
-                className={`btn h-7 px-2.5 text-xs ${
-                  isActive 
-                    ? 'btn-primary font-semibold' 
-                    : 'btn-ghost'
+                className={`h-7 px-2.5 text-xs rounded-md inline-flex items-center gap-1.5 transition-colors ${
+                  isActive
+                    ? 'bg-white/10 text-text-primary font-semibold shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]'
+                    : 'text-text-muted hover:text-text-primary hover:bg-white/5'
                 }`}
               >
-                <tab.icon size={13} />
+                <tab.icon size={13} className={isActive ? 'text-accent' : ''} />
                 <span>{tab.label}</span>
               </button>
             );
