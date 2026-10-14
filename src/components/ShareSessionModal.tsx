@@ -13,7 +13,7 @@ export const ShareSessionModal: React.FC<{
   const { workspacePath, setWorkspacePath, setFileTree, setBrainSessionId, setBrainRepoUrl, worktrees, brainSessionId } = useAppStore();
   const [activeTab, setActiveTab] = useState<'share' | 'join'>('share');
   const [copied, setCopied] = useState(false);
-  const [githubRepoUrl, setGithubRepoUrl] = useState('https://github.com/ibrohim/VendraCode');
+  const [githubRepoUrl, setGithubRepoUrl] = useState('');
   const [sessionId, setSessionId] = useState(brainSessionId);
   const [joinUrlInput, setJoinUrlInput] = useState('');
   const [isCloning, setIsCloning] = useState(false);
@@ -75,8 +75,13 @@ export const ShareSessionModal: React.FC<{
       if (sessionId) setBrainSessionId(sessionId);
 
       if (targetRepo && window.vendraAPI?.os) {
-        const repoName = targetRepo.split('/').pop()?.replace(/\.git$/, '') || 'shared-repo';
-        const targetDir = `/home/ibrohim/${repoName}`;
+        const repoName = (targetRepo.split('/').pop() || 'shared-repo')
+          .replace(/\.git$/, '')
+          .replace(/[^A-Za-z0-9._-]/g, '') || 'shared-repo';
+        const info = await window.vendraAPI.os.userInfo();
+        const home = (info?.homedir || '').replace(/[\\/]+$/, '');
+        if (!home) throw new Error('Could not resolve a home directory to clone into.');
+        const targetDir = `${home}/VendraCode/${repoName}`;
 
         setCloneStatus(`Cloning ${targetRepo} into isolated worktree...`);
 

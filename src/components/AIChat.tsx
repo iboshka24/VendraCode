@@ -428,7 +428,7 @@ When asked to write code or create features, ALWAYS use your tools:
 - search_codebase: locate symbols and patterns
 - list_files: explore project directories
 - web_search: search online documentation
-Workspace directory: ${workspacePath || '/home/ibrohim'}`
+Workspace directory: ${workspacePath || '(no folder open)'}`
       };
 
       let currentMsgs = [...baseMessages];

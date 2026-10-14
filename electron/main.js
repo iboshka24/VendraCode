@@ -175,15 +175,19 @@ ipcMain.handle('fs:search', async (_event, dirPath, query) => {
 // ─── Terminal IPC ──────────────────────────────────────────────────
 
 ipcMain.on('terminal:start', (event, cwd) => {
-  if (ptyProcess) {
+  // Drop the previous shell before killing it. Otherwise its exit event is
+  // delivered to the new xterm and looks like the live session crashed.
+  const replacedPty = ptyProcess;
+  ptyProcess = null;
+  if (replacedPty) {
     try {
-      if (typeof ptyProcess.kill === 'function') ptyProcess.kill();
+      if (typeof replacedPty.kill === 'function') replacedPty.kill();
     } catch {}
-    ptyProcess = null;
   }
-  if (terminalProcess) {
-    try { terminalProcess.kill(); } catch {}
-    terminalProcess = null;
+  const replacedChild = terminalProcess;
+  terminalProcess = null;
+  if (replacedChild) {
+    try { replacedChild.kill(); } catch {}
   }
 
   const shellCmd = process.platform === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash');
@@ -209,11 +213,13 @@ ipcMain.on('terminal:start', (event, cwd) => {
         }
       });
 
-      ptyProcess.onExit(({ exitCode }) => {
+      const spawned = ptyProcess;
+      spawned.onExit(({ exitCode }) => {
+        if (ptyProcess !== spawned) return;
+        ptyProcess = null;
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('terminal:exit', exitCode);
         }
-        ptyProcess = null;
       });
       return;
     } catch (err) {
@@ -237,9 +243,11 @@ ipcMain.on('terminal:start', (event, cwd) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:data', data.toString());
   });
 
-  terminalProcess.on('exit', (code) => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:exit', code);
+  const spawnedChild = terminalProcess;
+  spawnedChild.on('exit', (code) => {
+    if (terminalProcess !== spawnedChild) return;
     terminalProcess = null;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('terminal:exit', code);
   });
 });
 
@@ -408,8 +416,14 @@ const { webSearch, fetchUrl, takeScreenshot, getSystemInfo } = require('./tools'
 ipcMain.handle('os:userInfo', async () => {
   const os = require('os');
   const info = os.userInfo();
+  const cwd = process.cwd();
+  const markers = ['package.json', '.git', 'Cargo.toml', 'go.mod', 'pyproject.toml', 'composer.json'];
+  const isProject = markers.some((name) => fs.existsSync(path.join(cwd, name)));
   return {
     username: info.username || process.env.USER || process.env.LOGNAME || 'You',
+    homedir: os.homedir(),
+    cwd,
+    projectRoot: isProject ? cwd : null,
   };
 });
 

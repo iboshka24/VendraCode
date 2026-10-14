@@ -18,7 +18,7 @@ export interface VendraAPI {
   };
   os: {
     exec: (command: string, cwd?: string) => Promise<ExecResult>;
-    userInfo: () => Promise<{ username: string }>;
+    userInfo: () => Promise<{ username: string; homedir?: string; cwd?: string; projectRoot?: string | null }>;
   };
   dialog: {
     openDirectory: () => Promise<string | null>;

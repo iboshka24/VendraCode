@@ -4,12 +4,35 @@ import { useAppStore } from '@/stores/appStore';
 import { brainClient } from '@/services/brainClient';
 import { remoteClassToken, renderRemoteStyles } from '@/utils/remoteStyles';
 import { toWorkspaceRelative } from '@/utils/workspacePath';
-import { X, Circle, FolderOpen, Compass, Sparkles } from 'lucide-react';import { motion, AnimatePresence } from 'framer-motion';
+import { X, Circle, FolderOpen, Compass, Sparkles } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { VendraLogo } from './VendraLogo';
-import { LivePeersBadge } from './LivePeersBadge';
 
 /** Live diff broadcast is throttled so a fast typist can't flood the edge. */
 const BROADCAST_THROTTLE_MS = 120;
+
+function defineVendraTheme(monaco: any) {
+  monaco.editor.defineTheme('vendra-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'comment', foreground: '8b8ba0', fontStyle: 'italic' },
+    ],
+    colors: {
+      'editor.background': '#101014',
+      'editor.foreground': '#f4f4f8',
+      'editorLineNumber.foreground': '#5c5c70',
+      'editorLineNumber.activeForeground': '#d5d5e2',
+      'editor.selectionBackground': '#7c3aed44',
+      'editor.inactiveSelectionBackground': '#7c3aed22',
+      'editorCursor.foreground': '#3ee0a8',
+      'editor.lineHighlightBackground': '#ffffff0a',
+      'editorWidget.background': '#18181f',
+      'editorWidget.border': '#2a2a36',
+      'minimap.background': '#101014',
+    },
+  });
+}
 
 export function CodeEditor() {
   const {
@@ -374,19 +397,20 @@ export function CodeEditor() {
   // Welcome Screen when no files open
   if (openTabs.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-background select-none">
+      <div className="relative flex-1 flex items-center justify-center bg-background select-none overflow-hidden">
+        <div className="welcome-glow pointer-events-none absolute inset-0" />
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-center max-w-sm px-6"
+          className="relative text-center max-w-md px-8"
         >
-          <div className="flex justify-center mx-auto mb-4 drop-shadow-[0_0_24px_rgba(124,58,237,0.3)]">
-            <VendraLogo size={52} />
+          <div className="flex justify-center mx-auto mb-5 drop-shadow-[0_0_28px_rgba(124,58,237,0.45)]">
+            <VendraLogo size={64} />
           </div>
-          <h2 className="text-base font-bold text-text-primary mb-1 tracking-tight font-mono">
-            Vendra<strong className="text-ok font-black">Code</strong> IDE
+          <h2 className="text-lg font-bold text-text-primary mb-1.5 tracking-tight">
+            Vendra<span className="text-accent">Code</span> IDE
           </h2>
-          <p className="text-text-muted text-xs leading-relaxed mb-6">
+          <p className="text-text-secondary text-xs leading-relaxed mb-6 max-w-xs mx-auto">
             Multiplayer AI-Native Development Environment with The Shared Brain & Hermes agent skills.
           </p>
 
@@ -394,7 +418,7 @@ export function CodeEditor() {
             <button
               type="button"
               onClick={handleOpenFolder}
-              className="btn btn-ghost w-52 text-xs justify-center"
+              className="btn btn-primary w-56 text-xs justify-center"
             >
               <FolderOpen size={14} />
               <span>Open Repository</span>
@@ -402,7 +426,7 @@ export function CodeEditor() {
             <button
               type="button"
               onClick={() => setActiveView('mission-control')}
-              className="btn btn-ghost w-52 text-xs justify-center"
+              className="btn btn-ghost w-56 text-xs justify-center"
             >
               <Compass size={14} />
               <span>Mission Control</span>
@@ -410,17 +434,17 @@ export function CodeEditor() {
             <button
               type="button"
               onClick={toggleChat}
-              className="btn btn-ghost w-52 text-xs justify-center"
+              className="btn btn-ghost w-56 text-xs justify-center"
             >
               <Sparkles size={14} className="text-accent" />
               <span>AI Agent Prompt</span>
             </button>
           </div>
 
-          <div className="mt-8 pt-4 border-t border-border flex justify-center gap-4 text-[10px] text-text-muted font-mono">
-            <span>Ctrl+O · Open</span>
-            <span>Ctrl+S · Save</span>
-            <span>Ctrl+Shift+P · Palette</span>
+          <div className="mt-8 flex justify-center gap-2 text-[10px] text-text-muted font-mono">
+            <span className="welcome-key">Ctrl+O · Open</span>
+            <span className="welcome-key">Ctrl+S · Save</span>
+            <span className="welcome-key">Ctrl+Shift+P · Palette</span>
           </div>
         </motion.div>
       </div>
@@ -468,9 +492,7 @@ export function CodeEditor() {
 
         {/* Live Multi-Agent Co-Editing Button */}
         <div className="flex items-center gap-2 shrink-0 pr-2">
-          <LivePeersBadge />
-
-          <span className="hidden md:flex items-center gap-1.5 text-[10px] font-mono text-text-hint">
+          <span className="hidden lg:flex items-center gap-1.5 text-[10px] font-mono text-text-hint">
             Teammate edits stream into the open file automatically
           </span>
         </div>
@@ -482,10 +504,11 @@ export function CodeEditor() {
           <Editor
             key={activeTab.id}
             height="100%"
-            theme="vs-dark"
+            theme="vendra-dark"
             language={activeTab.language}
             value={activeTab.content}
             onChange={handleChange}
+            beforeMount={defineVendraTheme}
             onMount={handleEditorMount}
             options={{
               minimap: { enabled: settings.minimap },
