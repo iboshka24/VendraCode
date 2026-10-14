@@ -11,10 +11,15 @@
 
 const http = require('http');
 const { WebSocketServer, WebSocket } = require('ws');
+const { createLockStore } = require('./lock-store');
 
 const PORT = process.env.PORT || 4000;
+// Lock TTL is operator-tunable; default 5 minutes keeps a crashed agent
+// from wedging a shared session forever (see docs/amoeba-reverse-engineering.md).
+const LOCK_TTL_MS = Number(process.env.VENDRA_LOCK_TTL_MS || 5 * 60 * 1000);
 
 // In-memory state (persisted to disk periodically)
+const locks = createLockStore({ ttlMs: LOCK_TTL_MS });
 const state = {
   sessions: [
     {
@@ -36,7 +41,6 @@ const state = {
       updatedAt: Date.now(),
     }
   ],
-  locks: {},        // filePath -> { agentId, agentName, timestamp }
   actions: [],      // array of recent actions
   peers: new Set(), // active WebSocket clients
 };
@@ -63,7 +67,7 @@ const server = http.createServer((req, res) => {
       service: 'VendraCode Shared Brain',
       subdomain: 'brain.vendra.uz',
       activePeers: state.peers.size,
-      activeLocks: Object.keys(state.locks).length,
+      activeLocks: Object.keys(locks.list()).length,
       uptime: process.uptime(),
     }));
     return;
@@ -77,7 +81,7 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === '/v1/locks') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ locks: state.locks }));
+    res.end(JSON.stringify({ locks: locks.list() }));
     return;
   }
 
@@ -110,7 +114,7 @@ wss.on('connection', (ws) => {
   // Send initial state to newly joined peer
   ws.send(JSON.stringify({
     type: 'init',
-    locks: state.locks,
+    locks: locks.list(),
     sessions: state.sessions,
     recentActions: state.actions.slice(-20),
   }));
@@ -122,26 +126,37 @@ wss.on('connection', (ws) => {
       switch (msg.type) {
         case 'lock:acquire': {
           const { filePath, agentId, agentName } = msg;
-          const currentLock = state.locks[filePath];
+          const acquired = locks.acquire(filePath, { agentId, agentName });
 
-          if (currentLock && currentLock.agentId !== agentId) {
+          if (!acquired.ok && acquired.lockedBy) {
             ws.send(JSON.stringify({
               type: 'lock:conflict',
               filePath,
-              lockedBy: currentLock,
+              lockedBy: acquired.lockedBy,
             }));
+          } else if (acquired.ok) {
+            broadcast({ type: 'locks:updated', locks: locks.list() });
           } else {
-            state.locks[filePath] = { agentId, agentName, timestamp: Date.now() };
-            broadcast({ type: 'locks:updated', locks: state.locks });
+            ws.send(JSON.stringify({
+              type: 'lock:error',
+              filePath,
+              error: acquired.error || 'invalid lock request',
+            }));
           }
           break;
         }
 
         case 'lock:release': {
           const { filePath, agentId } = msg;
-          if (state.locks[filePath] && state.locks[filePath].agentId === agentId) {
-            delete state.locks[filePath];
-            broadcast({ type: 'locks:updated', locks: state.locks });
+          const released = locks.release(filePath, { agentId });
+          if (released.ok && released.released) {
+            broadcast({ type: 'locks:updated', locks: locks.list() });
+          } else if (!released.ok && released.lockedBy) {
+            ws.send(JSON.stringify({
+              type: 'lock:conflict',
+              filePath,
+              lockedBy: released.lockedBy,
+            }));
           }
           break;
         }
@@ -190,6 +205,16 @@ wss.on('connection', (ws) => {
     console.log(`[Brain] Client disconnected. Total peers: ${state.peers.size}`);
   });
 });
+
+// Reclaim expired locks so a crashed agent never wedges a shared session.
+// list() already drops expired entries lazily; this timer makes the
+// reclamation visible to peers even when nobody touches the locks.
+const pruneTimer = setInterval(() => {
+  if (locks.prune() > 0) {
+    broadcast({ type: 'locks:updated', locks: locks.list() });
+  }
+}, Math.min(LOCK_TTL_MS, 60 * 1000));
+pruneTimer.unref();
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n======================================================`);
