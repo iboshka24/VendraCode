@@ -1,0 +1,18 @@
+{
+  "$comment": "Pinned toolchain for reproducible VendraCode builds. Mirrors the managed-runtime pin-manifest discipline observed in docs/amoeba-reverse-engineering.md: every runtime the product ships or builds with is pinned to an exact version with its source. `scripts/verify-toolchain.mjs` enforces these pins locally and in CI.",
+  "pins": {
+    "node": {
+      "major": 22,
+      "source": ".github/workflows/build.yml (actions/setup-node)"
+    },
+    "electron": {
+      "range": "^29.1.0",
+      "source": "package.json devDependencies"
+    },
+    "install": {
+      "command": "npm ci",
+      "lockfile": "package-lock.json",
+      "source": ".github/workflows/build.yml"
+    }
+  }
+}

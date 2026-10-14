@@ -38,6 +38,9 @@ VendraCode is an open-source, multiplayer AI-native development environment (IDE
 - 🎯 **Mission Control** — Dashboard showing all active AI agent sessions in individual lanes with live status and action streams
 - ✅ **Approval System** — Independent security gates to review and approve/deny agent file changes and shell commands
 - 🔄 **Live Sync & Workspace Watcher** — Real-time recursive file system sync between all CLI agents and the IDE
+- ⏳ **Self-Healing File Locks** — Advisory locks expire (default 5 min, tunable) and stale ones are reclaimed live, so a crashed agent never wedges a shared session
+- 🔑 **Loopback Daemon Token** — File-backed bearer auth for local automation (`~/.vendra/daemon-token`, owner-only, constant-time check)
+- 📌 **Pinned Toolchain** — Node/Electron/install pins in `runtime/pins.json`, verified by `scripts/verify-toolchain.mjs` and unit-tested against CI
 - 📝 **Monaco Editor** — Full VS Code editing experience with syntax highlighting for 30+ languages
 - 💻 **Integrated Terminal** — Built-in terminal with xterm.js connected via IPC
 - 🛰️ **One-click Swarm Sharing** — Paste a `brain.vendra.uz` invite link to clone the shared repo, join the session and attach your agents
@@ -65,8 +68,8 @@ VendraCode is an open-source, multiplayer AI-native development environment (IDE
 
 ### Prerequisites
 
-- **Node.js** 18+
-- **npm** 9+ or **yarn** 1.22+
+- **Node.js** 22+ (pinned in `runtime/pins.json`, same as CI)
+- **npm** 10+ or **yarn** 1.22+
 - **Git**
 
 ### Quick Start
@@ -266,6 +269,7 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 ## 🙏 Acknowledgments
 
 - Inspired by [Amoeba](https://useamoeba.com/) — the multiplayer AI-native IDE
+- Amoeba 0.1.48 reverse-engineering notes: [docs/amoeba-reverse-engineering.md](docs/amoeba-reverse-engineering.md) (static REA analysis; clean-room findings only, no third-party code reused)
 - Built with [VS Code](https://github.com/microsoft/vscode)'s Monaco Editor
 - AI agent architecture inspired by [OpenCode](https://github.com/nichochar/opencode)
 
