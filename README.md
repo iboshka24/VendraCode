@@ -339,3 +339,10 @@ npm.cmd run test:swarm:win
 The Windows integration test uses temporary IDE/Codex profiles, joins an isolated test
 swarm, creates a real worktree of this repository, and checks peer discovery, live edit
 badges, a real MCP tool call, and Codex MCP add/list/remove.
+
+### 1.3.1: project-folder selection for CLI agents
+
+Sending a message to a CLI agent without an open, valid workspace now opens the folder
+picker before the agent starts. Cancelling leaves the prompt available to send again.
+Codex is launched with `--skip-git-repo-check` in the explicitly selected folder, so
+folders without a Git repository are supported with the workspace sandbox still enabled.

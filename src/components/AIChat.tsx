@@ -611,7 +611,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
   const runCliAgent = async (
     text: string,
     baseMessages: ChatMessage[],
-    agent: ChatAgentOption
+    agent: ChatAgentOption,
+    runWorkspace: string
   ) => {
     const api = window.vendraAPI;
     if (!api?.cli) {
@@ -648,7 +649,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       role: 'assistant',
       id: messageId,
       timestamp: startedAt,
-      content: `⚡ **${agent.name}** running in \`${cliBin}\`\n\nWorkspace: \`${workspacePath || '—'}\`\n\n⏳ running…`,
+      content: `⚡ **${agent.name}** running in \`${cliBin}\`\n\nWorkspace: \`${runWorkspace || '—'}\`\n\n⏳ running…`,
     };
     setMessages([...baseMessages, seedMessage]);
     setAgentStatus?.('running');
@@ -753,8 +754,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                 handledWrites.add(callKey);
                 const absPath = write.path.startsWith('/')
                   ? write.path
-                  : `${(workspacePath || '').replace(/\/+$/, '')}/${write.path.replace(/^\/+/, '')}`;
-                const relPath = toWorkspaceRelative(absPath, workspacePath);
+                  : `${(runWorkspace || '').replace(/\/+$/, '')}/${write.path.replace(/^\/+/, '')}`;
+                const relPath = toWorkspaceRelative(absPath, runWorkspace);
                 brainClient.acquireLock(relPath, agentWho);
                 agentLockedFiles.add(relPath);
                 if (write.kind === 'write' && typeof write.content === 'string') {
@@ -831,7 +832,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     let spawnOk = true;
     let spawnError = '';
     try {
-      const result = await api.cli.spawnAgent({ agentId, cliBin, args, cwd: workspacePath || undefined, prompt: text });
+      const result = await api.cli.spawnAgent({ agentId, cliBin, args, cwd: runWorkspace || undefined, prompt: text });
       if (!result?.success) {
         spawnOk = false;
         spawnError = result?.error || 'spawn refused';
@@ -889,8 +890,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       : m)));
 
     // Real side effect: the workspace watcher refreshes the explorer for us.
-    if (workspacePath && api.fs) {
-      try { setFileTree(await api.fs.readDir(workspacePath)); } catch {}
+    if (runWorkspace && api.fs) {
+      try { setFileTree(await api.fs.readDir(runWorkspace)); } catch {}
     }
   };
 
@@ -964,6 +965,22 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       if (handled) return;
     }
 
+    let runWorkspace = useAppStore.getState().workspacePath;
+    if (runAgent.type === 'cli') {
+      const valid = runWorkspace && (await window.vendraAPI.fs.stat(runWorkspace).catch(() => null))?.isDirectory;
+      if (!valid) {
+        const picked = await window.vendraAPI.dialog.openDirectory();
+        if (!picked) {
+          setMessages(prev => [...prev, { role: 'system', id: 'workspace-' + Date.now(), timestamp: Date.now(), content: 'Open a project folder to start the coding agent. Send your message again after selecting a folder.' }]);
+          return;
+        }
+        runWorkspace = picked;
+        useAppStore.getState().setWorkspacePath(picked);
+        localStorage.setItem('vendracode-workspace', picked);
+        setFileTree(await window.vendraAPI.fs.readDir(picked));
+      }
+    }
+
     const userMessage: ChatMessage = {
       role: 'user',
       content: text,
@@ -990,7 +1007,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
 
     // ─── CASE A: Local CLI Process (OpenCode, Claude Code, …) ───
     if (runAgent.type === 'cli') {
-      await runCliAgent(text, currentMessages, runAgent);
+      await runCliAgent(text, currentMessages, runAgent, runWorkspace!);
       return;
     }
 

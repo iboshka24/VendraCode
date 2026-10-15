@@ -774,6 +774,9 @@ ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cw
   }
 
   try {
+    if (args[0] === 'exec' && (!cwd || !path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory())) {
+      return { success: false, error: 'Open a project folder before starting Codex.' };
+    }
     const procArgs = [...args];
     if (prompt) {
       procArgs.push(prompt);

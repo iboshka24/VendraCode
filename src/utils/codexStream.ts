@@ -37,7 +37,7 @@ export function createCodexParser() {
 export function codexRunArgs(options: { sessionId?: string; effort?: string; model?: string } = {}): string[] {
   const args = ['exec'];
   if (options.sessionId) args.push('resume', options.sessionId);
-  args.push('--json');
+  args.push('--json', '--skip-git-repo-check');
   if (options.model) args.push('--model', options.model);
   // Resume inherits the sandbox policy saved with the thread.
   if (!options.sessionId) args.push('--sandbox', 'workspace-write');
