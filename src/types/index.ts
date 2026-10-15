@@ -1,6 +1,19 @@
 // ─── Window API Types ──────────────────────────────────────────────
 
+export interface McpServerConfig { name: string; enabled?: boolean; command?: string; args?: string[]; env?: Record<string, string>; url?: string; bearerTokenEnvVar?: string; status?: string; error?: string; toolCount?: number }
 export interface VendraAPI {
+  mcp: {
+    list: () => Promise<McpServerConfig[]>;
+    save: (server: McpServerConfig) => Promise<McpServerConfig>;
+    remove: (name: string) => Promise<void>;
+    test: (name: string) => Promise<Array<{ name: string; description: string }>>;
+    tools: () => Promise<{ tools: any[]; errors: Array<{ server: string; error: string }> }>;
+    call: (name: string, args: Record<string, unknown>) => Promise<any>;
+    close: () => Promise<void>;
+    codexList: () => Promise<Array<{ name: string; enabled: boolean; transport?: string; url?: string; command?: string; authStatus?: string }>>;
+    codexAdd: (server: McpServerConfig) => Promise<boolean>;
+    codexRemove: (name: string) => Promise<boolean>;
+  };
   fs: {
     readFile: (path: string) => Promise<string>;
     writeFile: (path: string, content: string) => Promise<boolean>;
@@ -30,6 +43,7 @@ export interface VendraAPI {
     worktreeAdd: (opts: { cwd: string; path: string; branch: string; create?: boolean }) => Promise<{ success: boolean; path?: string; branch?: string; error?: string }>;
     worktreeRemove: (opts: { cwd: string; path: string }) => Promise<{ success: boolean; error?: string }>;
   };
+  swarm: { share: (opts: { sessionId: string; token: string; repoUrl: string }) => Promise<{ success: boolean; repoUrl?: string; error?: string }>; join: (opts: { sessionId: string; token: string; repoUrl: string }) => Promise<{ success: boolean; path?: string; branch?: string; repoUrl?: string; error?: string }> };
   shell: {
     openExternal: (url: string) => Promise<void>;
   };
@@ -277,6 +291,7 @@ export interface ChatSession {
   messages: ChatMessage[];
   /** OpenCode CLI session id — lets the agent continue with full context. */
   opencodeSessionId?: string;
+  codexSessionId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -379,7 +394,7 @@ export interface GitWorktree {
 
 // ─── Settings Types ────────────────────────────────────────────────
 
-export type SettingsTab = 'general' | 'editor' | 'providers' | 'permissions' | 'sessions' | 'team' | 'bots';
+export type SettingsTab = 'mcp' | 'general' | 'editor' | 'providers' | 'permissions' | 'sessions' | 'team' | 'bots';
 
 export interface AppSettings {
   theme: 'dark' | 'light';

@@ -23,6 +23,7 @@ const PROJECT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ELECTRON = path.join(PROJECT, 'node_modules', 'electron', 'dist', 'electron');
 const FIXTURES = path.join(PROJECT, 'tests', 'fixtures');
 const TG_PORT = 8792;
+const TOKEN = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
 const SESSION = `mp-agent-${Date.now().toString(36)}`;
 const OUT = path.join(os.tmpdir(), 'vendracode-tests', 'multiplayer-agent');
 mkdirSync(OUT, { recursive: true });
@@ -146,6 +147,7 @@ async function boot(name, port, dir, workspace, extraEnv = {}) {
   await c.evaluate(`
     localStorage.setItem('vendracode-peer-name', ${JSON.stringify(name)});
     localStorage.setItem('vendracode-session', ${JSON.stringify(SESSION)});
+    localStorage.setItem('vendracode-swarm-token:' + ${JSON.stringify(SESSION)}, ${JSON.stringify(TOKEN)});
     localStorage.setItem('vendracode-workspace', ${JSON.stringify(workspace)});
     localStorage.setItem('vendracode-chats-v1', JSON.stringify([]));
     ${extraEnv.__botSeed ? `localStorage.setItem('vendracode-bots-v1', JSON.stringify([{ id: 'bot-mp', label: 'MP bot', token: 'test-token', agentId: 'opencode', enabled: true, pairedChatId: null }]));` : ''}

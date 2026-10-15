@@ -1,3 +1,4 @@
+import { loadSwarm, saveSwarm } from '@/utils/swarmSession';
 import { create } from 'zustand';
 import type {
   FileEntry, EditorTab, ChatMessage, AgentLane, Session, ApprovalRequest,
@@ -43,13 +44,7 @@ function persistChatSessions(sessions: ChatSession[]): void {
 
 /** Session id the user last used, restored synchronously to avoid a
  *  connect → reconnect round trip on boot. */
-const loadBrainSession = (): string => {
-  try {
-    return localStorage.getItem('vendracode-session') || 'default-session';
-  } catch {
-    return 'default-session';
-  }
-};
+const initialSwarm = loadSwarm();
 
 const loadSettings = (): AppSettings => {
   try {
@@ -86,7 +81,7 @@ const resolveActiveProvider = (): ProviderConfig => {
 };
 
 /** Reasoning effort levels offered for agents (model variant / native param). */
-export type ThinkingEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ThinkingEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 
 /** A file mutation an agent is performing, mirrored into the editor live. */
 export interface LiveWrite {
@@ -154,7 +149,7 @@ interface AppState {
   /** Replaces the message list of the currently active chat. */
   setActiveChatMessages: (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
   /** Stores the CLI session id so the next message continues the same context. */
-  setChatCliSession: (chatId: string, sessionId?: string) => void;
+  setChatCliSession: (chatId: string, sessionId?: string, engine?: 'opencode' | 'codex') => void;
   isChatOpen: boolean;
   toggleChat: () => void;
   /** Width of the agent panel in px (drag-resizable, persisted). */
@@ -237,6 +232,8 @@ interface AppState {
 
   // Cloudflare Edge Brain (multiplayer live diffs)
   brainSessionId: string;
+  brainSessionToken: string;
+  setBrainCredentials: (id: string, token: string) => void;
   setBrainSessionId: (id: string) => void;
   brainStatus: BrainConnectionStatus;
   setBrainStatus: (status: BrainConnectionStatus) => void;
@@ -340,7 +337,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ yoloMode: on });
   },
   thinkingEffort: (() => {
-    const allowed: ThinkingEffort[] = ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+    const allowed: ThinkingEffort[] = ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
     try {
       const saved = localStorage.getItem('vendracode-thinking') as ThinkingEffort | null;
       if (saved && allowed.includes(saved)) return saved;
@@ -407,10 +404,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       persistChatSessions(sessions);
       return { chatSessions: sessions, activeChatId: targetId };
     }),
-  setChatCliSession: (chatId, sessionId) =>
+  setChatCliSession: (chatId, sessionId, engine = 'opencode') =>
     set((s) => {
       const sessions = s.chatSessions.map((c) =>
-        c.id === chatId ? { ...c, opencodeSessionId: sessionId || undefined, updatedAt: Date.now() } : c
+        c.id === chatId ? { ...c, [engine === 'codex' ? 'codexSessionId' : 'opencodeSessionId']: sessionId || undefined, updatedAt: Date.now() } : c
       );
       persistChatSessions(sessions);
       return { chatSessions: sessions };
@@ -559,11 +556,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({ botStatuses: { ...s.botStatuses, [id]: status } })),
 
   // Cloudflare Edge Brain (multiplayer live diffs)
-  brainSessionId: loadBrainSession(),
+  brainSessionId: initialSwarm.sessionId,
+  brainSessionToken: initialSwarm.token,
+  setBrainCredentials: (id, token) => {
+    saveSwarm({ sessionId: id, token });
+    set({ brainSessionId: id, brainSessionToken: token, activeLocks: {}, remoteEdits: {}, brainPeers: [], brainRepoUrl: '' });
+  },
   setBrainSessionId: (id) => {
-    const value = id || 'default-session';
-    try { localStorage.setItem('vendracode-session', value); } catch {}
-    set({ brainSessionId: value });
+    const token = localStorage.getItem(`vendracode-swarm-token:${id}`) || '';
+    if (!token) return;
+    saveSwarm({ sessionId: id, token });
+    set({ brainSessionId: id, brainSessionToken: token, activeLocks: {}, remoteEdits: {}, brainPeers: [], brainRepoUrl: '' });
   },
   brainStatus: 'idle',
   setBrainStatus: (status) => set({ brainStatus: status }),

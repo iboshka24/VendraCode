@@ -278,3 +278,64 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 <div align="center">
   <strong>Built with ⚡ by the VendraCode community</strong>
 </div>
+
+## Codex CLI
+
+Install the official CLI in PowerShell:
+
+```powershell
+npm.cmd install -g @openai/codex@latest
+codex.cmd --version
+codex.cmd login
+```
+
+Restart VendraCode, open a workspace, and select **Codex CLI** in the agent selector.
+VendraCode detects the npm installation, runs `codex exec --json --sandbox workspace-write`,
+renders assistant messages and tool status, and saves the thread ID separately for each chat.
+Following prompts use `codex exec resume`. Codex uses its own login, model and configuration;
+select a model in the Codex model picker to override the CLI default. The picker reads the catalog through Codex app-server model/list using your local login. The thinking selector is
+passed as `model_reasoning_effort`; supported values depend on your Codex model.
+File changes are reflected by the existing workspace watcher. Stop uses the existing process-tree shutdown.
+
+Run the Codex integration unit tests with `node tests/codex-stream.test.mjs`.
+
+## Swarm and MCP (1.3.0)
+
+Share → Copy Link registers a private, authenticated room. Share the complete invitation
+with your friend; both participants must use VendraCode 1.3 or newer. Old unauthenticated
+rooms migrate to a new private room, so create a new invitation after upgrading.
+
+Join Friend's Swarm validates the token and repository before running Git. It maintains a
+bare repository cache and creates a fresh branch and worktree under
+`Documents/VendraCode/Swarm`. Rejoining never pulls into or resets an existing checkout.
+The remote default branch is discovered instead of assuming `main`. Private repositories
+require working Git credentials on the joining computer.
+
+Swarm shares live edit highlights, agent activity, repository identity, and advisory locks.
+It does not automatically overwrite your files with a teammate's edits: use Git commits,
+push/pull and merges to transfer code. Locks are owned by the server-side connection and
+agent, expire after five minutes, and renew while held by a connected client. They are
+coordination notices, not a filesystem access restriction.
+
+Settings → MCP Servers manages local stdio and Streamable HTTP servers for **Vendra AI**
+and **Codex CLI** separately. Vendra AI discovers server tools and includes them in its
+agent loop; external calls use the existing approval gate unless YOLO is enabled. Test
+connection displays discovered tool names. HTTP bearer authentication uses a named local
+environment variable. OAuth-only servers can be configured and authenticated through
+Codex (`codex mcp login <name>`); native Vendra AI does not implement an OAuth browser flow.
+MCP configuration is local to the machine and is never shared through swarm invitations.
+Codex MCP entries are managed using its CLI and remain in the user's Codex configuration.
+
+Validation:
+
+```powershell
+npm.cmd run test:unit
+npm.cmd run test:swarm:live
+# Build Windows first, then set the packaged executable path if necessary:
+$env:VENDRA_TEST_APP = 'C:\path\to\win-unpacked\VendraCode.exe'
+npm.cmd run test:swarm:win
+```
+
+The Windows integration test uses temporary IDE/Codex profiles, joins an isolated test
+swarm, creates a real worktree of this repository, and checks peer discovery, live edit
+badges, a real MCP tool call, and Codex MCP add/list/remove.

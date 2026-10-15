@@ -27,6 +27,7 @@ import { join } from 'node:path';
 const PROJECT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const ELECTRON = join(PROJECT, 'node_modules/electron/dist/electron');
 const OUT = '/tmp/vc-tests/multiplayer';
+const TOKEN = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
 const SESSION = `verify-swarm-${Date.now()}`;
 
 rmSync(OUT, { recursive: true, force: true });
@@ -124,6 +125,7 @@ async function boot(inst) {
   await c.evaluate(`
     localStorage.setItem('vendracode-peer-name', ${JSON.stringify(inst.name)});
     localStorage.setItem('vendracode-session', ${JSON.stringify(SESSION)});
+    localStorage.setItem('vendracode-swarm-token:' + ${JSON.stringify(SESSION)}, ${JSON.stringify(TOKEN)});
     localStorage.setItem('vendracode-workspace', ${JSON.stringify(inst.workspace)});
     'seeded';
   `);

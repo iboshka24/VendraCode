@@ -8,3 +8,6 @@ scratch_amoeba/
 *.log
 .DS_Store
 Thumbs.db
+
+release-*/
+/worker-dry-run/

@@ -1,12 +1,13 @@
 import React, { useCallback } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { FileEntry } from '@/types/index';
+import { toWorkspaceRelative } from '@/utils/workspacePath';
 import { getFileIcon } from '@/utils/providers';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, RefreshCw, Search, FolderPlus, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function FileTreeItem({ entry, depth }: { entry: FileEntry; depth: number }) {
-  const { toggleFolder, openFile, activeTabId, setFileTree, activeLocks } = useAppStore();
+  const { toggleFolder, openFile, activeTabId, setFileTree, activeLocks, workspacePath } = useAppStore();
 
   const handleFolderClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -83,7 +84,7 @@ function FileTreeItem({ entry, depth }: { entry: FileEntry; depth: number }) {
   }
 
   const { icon, color } = getFileIcon(entry.name);
-  const lock = activeLocks ? (activeLocks[entry.path] || activeLocks[entry.name]) : null;
+  const lock = activeLocks ? (activeLocks[toWorkspaceRelative(entry.path, workspacePath)] || activeLocks[entry.path]) : null;
 
   return (
     <div

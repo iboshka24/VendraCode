@@ -32,11 +32,11 @@ const HELPERS = [
   extract('quoteForCmd'),
 ].join('\n\n');
 
-function sandbox({ platform = 'linux', env = {}, existing = new Set() } = {}) {
+function sandbox({ platform = 'linux', env = {}, existing = new Set(), whereOutput } = {}) {
   const fakeFs = { existsSync: (p) => existing.has(String(p)) };
   const fakeProcess = { platform, env };
   const childProcess = {
-    execFileSync: () => { throw new Error('not on PATH (mocked)'); },
+    execFileSync: () => { if (whereOutput !== undefined) return whereOutput; throw new Error('not on PATH (mocked)'); },
   };
   const requireShim = (name) => (name === 'child_process' ? childProcess : require(name));
   const factory = new Function(
@@ -122,6 +122,16 @@ console.log('Windows CLI locator');
   const lin = sandbox({ platform: 'linux', env: { HOME: '/home/ibrohim' }, existing: new Set([linuxPath]) });
   check(lin.resolveCliBinary('opencode') === linuxPath, 'linux по-прежнему находит ~/.opencode/bin/opencode');
   check(lin.cliSearchDirs().includes('/usr/bin'), 'linux-пути на месте');
+}
+
+
+// npm ships both a POSIX shell script and a Windows command shim.
+{
+  const base = path.join('C:/Users/test/AppData/Roaming/npm', 'codex');
+  const existing = new Set([base, base + '.cmd']);
+  const opts = { platform: 'win32', env: { APPDATA: 'C:/Users/test/AppData/Roaming' }, existing };
+  check(sandbox({ ...opts, whereOutput: base + '\r\n' + base + '.cmd\r\n' }).resolveCliBinary('codex') === base + '.cmd', 'Windows PATH skips the npm POSIX shell shim');
+  check(sandbox(opts).resolveCliBinary('codex') === base + '.cmd', 'Windows fallback skips the npm POSIX shell shim');
 }
 
 console.log(`\nИТОГ: ${pass}/${pass + fail}`);

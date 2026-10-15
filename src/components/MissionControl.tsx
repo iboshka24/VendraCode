@@ -158,6 +158,7 @@ export const MissionControl: React.FC = () => {
     const agentId = `mission-${cliId}-${Date.now()}`;
     const argsByAgent: Record<string, string[]> = {
       opencode: ['run', '--auto'],
+      codex: ['exec', '--json', '--sandbox', 'workspace-write'],
       claude: ['-p'],
       agy: ['run', '--auto'],
       cline: ['run'],

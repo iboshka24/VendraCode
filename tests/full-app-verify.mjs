@@ -25,6 +25,7 @@ import { join } from 'node:path';
 const PROJECT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const ELECTRON = join(PROJECT, 'node_modules/electron/dist/electron');
 const OUT = '/tmp/vc-tests/full-app';
+const TOKEN = crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
 const SESSION = `full-verify-${Date.now()}`;
 
 rmSync(OUT, { recursive: true, force: true });
@@ -182,6 +183,7 @@ await c.send('Page.navigate', { url: `file://${PROJECT}/dist/index.html` });
 await sleep(1200);
 await c.evaluate(`localStorage.setItem('vendracode-peer-name', 'Ibrohim');
                   localStorage.setItem('vendracode-session', ${JSON.stringify(SESSION)});
+    localStorage.setItem('vendracode-swarm-token:' + ${JSON.stringify(SESSION)}, ${JSON.stringify(TOKEN)});
                   'ok'`);
 await c.send('Page.reload', { ignoreCache: true });
 await sleep(6000);

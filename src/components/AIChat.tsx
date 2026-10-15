@@ -9,6 +9,7 @@ import { useAppStore } from '@/stores/appStore';
 import type { LocalCLIDetected, ChatSession } from '@/types';
 import { brainClient } from '@/services/brainClient';
 import { toWorkspaceRelative } from '@/utils/workspacePath';
+import { createCodexParser, codexRunArgs } from '@/utils/codexStream';
 import { parseCliChunk, opencodeRunArgs, opencodeModelOverride, deriveChatTitle, extractAgentWrite, toTelegramText } from '@/utils/opencodeStream';
 import { MarkdownMessage } from './MarkdownMessage';
 import { CHAT_AGENTS, type ChatAgentOption } from '@/utils/chatAgents';
@@ -109,9 +110,15 @@ export const AIChat: React.FC = () => {
     keyHint?: string;
     /** Model is only callable through an installed agent CLI (no endpoint+key). */
     cliModel?: boolean;
+    supportedReasoningEfforts?: string[];
+    isDefault?: boolean;
   }>>([]);
   const [isScanningModels, setIsScanningModels] = useState(false);
+  const [modelScanError, setModelScanError] = useState('');
+  const modelScanSequence = useRef(0);
+  const [codexModel, setCodexModel] = useState(() => localStorage.getItem('vendracode-codex-model') || '');
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
+  const codexEfforts = (scannedModels.find(m => m.id === codexModel) || scannedModels.find(m => m.isDefault))?.supportedReasoningEfforts;
 
   // Guarantee there is always one chat to talk in (also seeds the first run).
   useEffect(() => {
@@ -159,7 +166,7 @@ export const AIChat: React.FC = () => {
       return { error: 'Failed to parse tool arguments' };
     }
 
-    const requiresApproval = ['create_file', 'edit_file', 'delete_file', 'run_command'].includes(name);
+    const requiresApproval = name.startsWith('mcp_') || ['create_file', 'edit_file', 'delete_file', 'run_command'].includes(name);
 
     if (requiresApproval && settings?.permissions?.requireApproval && !yoloMode) {
       const approved = await new Promise<boolean>((resolve) => {
@@ -190,6 +197,8 @@ export const AIChat: React.FC = () => {
       if (!api) {
         throw new Error('Vendra API not available');
       }
+
+      if (name.startsWith('mcp_')) return await api.mcp.call(name, args);
 
       // Brain coordination: report intent and acquire lock if file action
       if (['create_file', 'edit_file', 'delete_file'].includes(name) && args.path && api.brain) {
@@ -318,23 +327,39 @@ export const AIChat: React.FC = () => {
   };
 
   const handleScanModels = async () => {
+    const sequence = ++modelScanSequence.current;
     setIsScanningModels(true);
+    setModelScanError('');
+    setIsModelPickerOpen(true);
     try {
       if (window.vendraAPI?.scanner) {
         const list = await window.vendraAPI.scanner.scanModels({
-          providerType: selectedAgent.id === 'opencode' ? 'opencode' : activeProvider?.id,
+          providerType: ['codex', 'opencode'].includes(selectedAgent.id) ? selectedAgent.id : activeProvider?.id,
           baseUrl: activeProvider?.baseUrl,
           apiKey: activeProvider?.apiKey
         });
+        if (sequence !== modelScanSequence.current) return;
         setScannedModels(list);
         setIsModelPickerOpen(true);
       }
     } catch (err) {
-      console.error('Scan models error:', err);
+      if (sequence === modelScanSequence.current) {
+        setScannedModels([]);
+        setModelScanError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setIsScanningModels(false);
+      if (sequence === modelScanSequence.current) setIsScanningModels(false);
     }
   };
+
+  useEffect(() => {
+    ++modelScanSequence.current;
+    setScannedModels([]);
+    setModelScanError('');
+    setIsScanningModels(false);
+    setIsModelPickerOpen(false);
+    if (selectedAgent.id === 'codex') void handleScanModels();
+  }, [selectedAgent.id]);
 
   /**
    * Imports a discovered model by configuring the provider it actually belongs
@@ -344,6 +369,13 @@ export const AIChat: React.FC = () => {
    * wrong API and every request failed.
    */
   const handleSelectModel = (m: (typeof scannedModels)[number]) => {
+    if (m.provider === 'codex') {
+      setCodexModel(m.id);
+      if (thinkingEffort !== 'default' && m.supportedReasoningEfforts && !m.supportedReasoningEfforts.includes(thinkingEffort)) setThinkingEffort('default');
+      localStorage.setItem('vendracode-codex-model', m.id);
+      setIsModelPickerOpen(false);
+      return;
+    }
     const endpoint = m.baseUrl || activeProvider?.baseUrl || '';
     const providerId = m.providerId || activeProvider?.id || 'custom';
     const prettyName = m.providerName || prettyProviderName(m) || 'Discovered Provider';
@@ -414,6 +446,8 @@ export const AIChat: React.FC = () => {
     nativeAbortRef.current = new AbortController();
 
     try {
+      const external = await window.vendraAPI.mcp.tools();
+      if (external.errors.length) setMessages(prev => [...prev, { role: 'system', id: `mcp-error-${Date.now()}`, timestamp: Date.now(), content: external.errors.map(e => `MCP ${e.server}: ${e.error}`).join('\n') }]);
       const systemMessage: ChatMessage = {
         id: 'system',
         role: 'system',
@@ -469,7 +503,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
           body: JSON.stringify({
             model: activeProvider.model,
             messages: apiMessages,
-            tools: AGENT_TOOLS,
+            tools: [...AGENT_TOOLS, ...external.tools],
             tool_choice: 'auto',
             ...reasoningBody
           })
@@ -673,15 +707,19 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     };
 
     const chatId = activeChat?.id;
+    const parseCodex = createCodexParser();
 
     const detachOutput = api.cli.onAgentOutput((chunk) => {
       if (chunk.agentId !== agentId) return;
 
       // OpenCode prints NDJSON events: readable text, tool calls, session id.
-      if (agent.id === 'opencode') {
-        for (const parsed of parseCliChunk(chunk.text || '')) {
-          if (parsed.sessionId && chatId && parsed.sessionId !== activeChat?.opencodeSessionId) {
-            setChatCliSession(chatId, parsed.sessionId);
+      if (agent.id === 'opencode' || agent.id === 'codex') {
+        const parsedChunks = agent.id === 'codex'
+          ? (chunk.type === 'stderr' ? [{ text: chunk.text || '' }] : parseCodex(chunk.text || ''))
+          : parseCliChunk(chunk.text || '');
+        for (const parsed of parsedChunks) {
+          if (parsed.sessionId && chatId && parsed.sessionId !== (agent.id === 'codex' ? activeChat?.codexSessionId : activeChat?.opencodeSessionId)) {
+            setChatCliSession(chatId, parsed.sessionId, agent.id === 'codex' ? 'codex' : 'opencode');
           }
           if (parsed.error) {
             setMessages(prev => [...prev, {
@@ -783,6 +821,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
         sessionId: activeChat?.opencodeSessionId,
         model: opencodeModelOverride(activeProvider || undefined, thinkingEffort),
       }),
+      codex: codexRunArgs({ sessionId: activeChat?.codexSessionId, effort: codexEfforts && !codexEfforts.includes(thinkingEffort) ? 'default' : thinkingEffort, model: codexModel || undefined }),
       claude: ['-p', '--dangerously-skip-permissions'],
       agy: ['run', '--auto'],
       cline: ['run'],
@@ -1200,12 +1239,13 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             type="button"
             className="agentpill"
             onClick={() => {
+              if (selectedAgent.id === 'codex') { void handleScanModels(); return; }
               setIsProviderDropdownOpen(!isProviderDropdownOpen);
               setIsAgentDropdownOpen(false);
             }}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-accent" />
-            <span className="font-mono text-xs truncate max-w-[80px]">{activeProvider?.name || 'Model'}</span>
+            <span className="font-mono text-xs truncate max-w-[80px]">{selectedAgent.id === 'codex' ? 'OpenAI Codex' : activeProvider?.name || 'Model'}</span>
             <ChevronDown className="w-3 h-3 text-text-muted" />
           </button>
           
@@ -1250,17 +1290,20 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
               <Cpu className="w-3 h-3 text-ok" />
             )}
             <span className="font-mono text-[11px] truncate max-w-[85px]">
-              {activeProvider?.model || 'Scan Models'}
+              {selectedAgent.id === 'codex' ? codexModel || 'Codex default' : activeProvider?.model || 'Scan Models'}
             </span>
             <ChevronDown className="w-3 h-3 text-text-muted" />
           </button>
 
-          {isModelPickerOpen && scannedModels.length > 0 && (
+          {isModelPickerOpen && (
             <div className="absolute right-0 mt-1.5 w-72 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1.5 max-h-64 overflow-y-auto">
               <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider flex justify-between items-center">
                 <span>Live Discovered Models ({scannedModels.length})</span>
                 <button type="button" onClick={() => setIsModelPickerOpen(false)} className="text-text-muted hover:text-text-primary text-xs">✕</button>
               </div>
+              {isScanningModels && <p className="text-xs text-text-muted px-2 py-2">Loading models…</p>}
+              {modelScanError && <p role="alert" className="text-xs text-warning px-2 py-2">{modelScanError}</p>}
+              {!isScanningModels && !modelScanError && scannedModels.length === 0 && <p className="text-xs text-text-muted px-2 py-2">No models returned. Check your CLI login and retry.</p>}
               <div className="space-y-0.5 mt-1">
                 {scannedModels.map((m) => {
                   let host = '';
@@ -1271,12 +1314,12 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                       type="button"
                       onClick={() => handleSelectModel(m)}
                       className={`w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors flex items-center justify-between ${
-                        activeProvider?.model === m.id
+                        (selectedAgent.id === 'codex' ? codexModel : activeProvider?.model) === m.id
                           ? 'bg-chip text-text-primary font-bold'
                           : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
                       }`}
                       title={m.cliModel
-                        ? `Use ${m.id} through the OpenCode CLI (credentials stay inside the CLI)`
+                        ? `Use ${m.id} through ${m.provider === 'codex' ? 'Codex' : 'OpenCode'} CLI (credentials stay inside the CLI)`
                         : m.apiKey
                           ? `Import → ${prettyProviderName(m)} (${host || 'active provider'}) · key ready`
                           : `Import → ${prettyProviderName(m)} · ${m.keyHint || 'API key required for this endpoint'}`}
@@ -1291,16 +1334,16 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                           {!m.cliModel && m.apiKey && <span className="text-ok">· key ready</span>}
                         </div>
                       </div>
-                      {activeProvider?.model === m.id && <Check size={12} className="text-ok shrink-0" />}
+                      {(selectedAgent.id === 'codex' ? codexModel : activeProvider?.model) === m.id && <Check size={12} className="text-ok shrink-0" />}
                     </button>
                   );
                 })}
               </div>
               <p className="text-[9px] text-text-muted px-2 py-1.5 border-t border-border mt-1 leading-snug">
-                Picking a model switches the active provider to its own endpoint &amp; key (from
+                {selectedAgent.id === 'codex' ? 'Models come from your installed Codex CLI. The selected model is used for new prompts and resumed chats.' : <>Picking a model switches the active provider to its own endpoint &amp; key (from
                 opencode.json), so requests go to the right API. Models marked <em>via CLI</em>
                 (OpenCode Zen and friends) have no endpoint — prompts run through
-                `opencode run --model …` instead.
+                `opencode run --model …` instead.</>}
               </p>
             </div>
           )}
@@ -1330,7 +1373,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
               <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider">
                 Reasoning effort
               </div>
-              {(['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const).map((v) => (
+              {(['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const).filter(v => selectedAgent.id !== 'codex' || v === 'default' || !codexEfforts || codexEfforts.includes(v)).map((v) => (
                 <button
                   key={v}
                   type="button"
@@ -1759,7 +1802,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             ) : agentStatus === 'running' ? (
               <button
                 type="button"
-                onClick={() => { nativeStopRef.current = true; nativeAbortRef.current?.abort(); }}
+                onClick={() => { nativeStopRef.current = true; nativeAbortRef.current?.abort(); pendingApproval?.resolve(false); setPendingApproval(null); void window.vendraAPI.mcp.close(); }}
                 className="btn btn-ghost h-7 w-7 p-0 rounded-lg text-danger hover:bg-danger/15"
                 title="Stop the agent"
               >

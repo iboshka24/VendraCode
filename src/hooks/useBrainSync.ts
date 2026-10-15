@@ -14,6 +14,7 @@ import { brainClient, setBrainURL } from '@/services/brainClient';
  */
 export function useBrainSync() {
   const workspacePath = useAppStore((s) => s.workspacePath);
+  const brainSessionToken = useAppStore((s) => s.brainSessionToken);
   const brainSessionId = useAppStore((s) => s.brainSessionId);
   const brainRepoUrl = useAppStore((s) => s.brainRepoUrl);
   const setBrainStatus = useAppStore((s) => s.setBrainStatus);
@@ -79,9 +80,9 @@ export function useBrainSync() {
 
   // 2. Connect for the active session, advertising the linked repo
   useEffect(() => {
-    brainClient.setSession({ sessionId: brainSessionId, repoUrl: brainRepoUrl });
+    brainClient.setSession({ sessionId: brainSessionId, token: brainSessionToken, repoUrl: brainRepoUrl });
     brainClient.connect();
-  }, [brainSessionId, brainRepoUrl]);
+  }, [brainSessionId, brainSessionToken, brainRepoUrl]);
 
   // 3. Detect the GitHub remote of the open workspace (source of truth for the swarm)
   useEffect(() => {

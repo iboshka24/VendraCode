@@ -89,7 +89,7 @@ function App() {
   // Auto-load last workspace or default workspace on start so Explorer isn't blank
   useEffect(() => {
     if (!window.vendraAPI) return;
-    const last = localStorage.getItem('vendracode-workspace') || '/home/ibrohim/VendraCode';
+    const last = localStorage.getItem('vendracode-workspace') || '';
     if (!workspacePath && last) {
       setWorkspacePath(last);
       window.vendraAPI.fs.readDir(last).then((entries) => {
@@ -104,7 +104,7 @@ function App() {
   useEffect(() => {
     if (!window.vendraAPI) return;
 
-    // Detect installed agent CLIs (agy, cline, opencode, claude)
+    // Detect installed agent CLIs (codex, agy, cline, opencode, claude)
     window.vendraAPI.cli.detectAll().then((clis) => {
       setLocalCLIs(clis);
     });

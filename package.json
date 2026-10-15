@@ -1,8 +1,8 @@
 {
   "name": "vendracode",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "VendraCode — Multiplayer AI-native IDE. Your agents, working as one.",
-  "homepage": "https://github.com/ibrohim/VendraCode",
+  "homepage": "https://github.com/iboshka24/VendraCode",
   "author": "VendraCode Team <team@vendracode.dev>",
   "license": "MIT",
   "main": "electron/main.js",
@@ -23,13 +23,17 @@
     "test:multiplayer": "node tests/multiplayer-verify.mjs",
     "test:zen": "node tests/zen-e2e.mjs",
     "test": "npm run test:unit && npm run test:app && npm run test:multiplayer && npm run test:multiplayer-agent && npm run test:zen && npm run test:agent && npm run test:stop",
-    "test:unit": "node tests/cli-locate.test.mjs && node tests/lock-store.test.mjs && node tests/daemon-token.test.mjs && node tests/toolchain-pins.test.mjs",
+    "test:unit": "node tests/cli-locate.test.mjs && node tests/lock-store.test.mjs && node tests/daemon-token.test.mjs && node tests/toolchain-pins.test.mjs && node tests/codex-stream.test.mjs && node tests/codex-models.test.cjs && node tests/swarm-worker.test.mjs && node tests/swarm-join.test.cjs && node tests/swarm-paths.test.mjs && node tests/mcp.test.cjs",
     "test:agent": "node tests/agent-e2e.mjs",
     "test:multiplayer-agent": "node tests/multiplayer-agent-verify.mjs",
-    "test:stop": "node tests/stop-verify.mjs"
+    "test:stop": "node tests/stop-verify.mjs",
+    "test:swarm:live": "node tests/swarm-live.mjs",
+    "test:swarm:win": "node tests/swarm-win-e2e.cjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@monaco-editor/react": "^4.6.0",
+    "cross-spawn": "7.0.6",
     "framer-motion": "^11.0.3",
     "lucide-react": "^0.323.0",
     "monaco-editor": "^0.57.0",

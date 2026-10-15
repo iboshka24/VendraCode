@@ -6,6 +6,7 @@ import {
   Users, GitBranch, Check, X, Plus, Trash2, TestTube, Bot, Terminal, Key, Send, Play, Square
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { McpSettings } from './McpSettings';
 import { CHAT_AGENTS } from '@/utils/chatAgents';
 
 export const Settings: React.FC = () => {
@@ -17,6 +18,7 @@ export const Settings: React.FC = () => {
   const [newBotAgent, setNewBotAgent] = useState('opencode');
 
   const tabs = [
+    { id: 'mcp', label: 'MCP Servers', icon: <Terminal size={16} /> },
     { id: 'providers', label: 'Agents & Providers', icon: <Bot size={16} /> },
     { id: 'bots', label: 'Messenger Bots', icon: <Send size={16} /> },
     { id: 'permissions', label: 'Permissions & Gates', icon: <Shield size={16} /> },
@@ -153,6 +155,7 @@ export const Settings: React.FC = () => {
       {/* Content Area */}
       <div className="flex-1 overflow-auto p-6">
         <div className="max-w-4xl mx-auto">
+          {settingsTab === 'mcp' && <McpSettings />}
           {/* ─── Providers Tab (Agents & Providers) ─── */}
           {settingsTab === 'providers' && (
             <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
@@ -170,7 +173,7 @@ export const Settings: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-xs text-text-secondary mb-4 leading-relaxed">
-                  VendraCode detects local AI coding CLIs on this machine (agy, cline, opencode, claude code). Anything you run there joins the same brain session, so teammates see its file locks and edits live.
+                  VendraCode detects local AI coding CLIs on this machine (codex, agy, cline, opencode, claude code). Anything you run there joins the same brain session, so teammates see its file locks and edits live.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -212,7 +215,7 @@ export const Settings: React.FC = () => {
                   ))}
                   {localCLIs.length === 0 && (
                     <p className="text-xs text-text-muted col-span-full py-6 text-center border border-dashed border-border rounded-lg">
-                      No agent CLI detected on this machine yet. Install one (opencode, claude, cline, agy)
+                      No agent CLI detected on this machine yet. Install one (codex, opencode, claude, cline, agy)
                       and it shows up here automatically.
                     </p>
                   )}

@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const mod=async file=>import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2020}}).outputText).toString('base64'));
+const paths=await mod('src/utils/workspacePath.ts');
+assert.equal(paths.toWorkspaceRelative('C:\\Users\\A\\repo\\src\\a.ts','c:/users/a/repo'),'src/a.ts');
+assert.equal(paths.toWorkspaceRelative('D:/Friend/repo/src/a.ts','D:\\Friend\\repo'),'src/a.ts');
+assert.equal(paths.toWorkspaceRelative('C:/repo-other/a.ts','C:/repo'),'C:/repo-other/a.ts');
+assert.equal(paths.toWorkspaceRelative('/repo/Src/a.ts','/repo'),'Src/a.ts');
+assert.equal(paths.toWorkspaceAbsolute('src/a.ts','C:\\repo'),'C:/repo/src/a.ts');
+const stored=new Map([['vendracode-session','default-session']]);globalThis.localStorage={getItem:k=>stored.get(k)||null,setItem:(k,v)=>stored.set(k,v)};
+const session=await mod('src/utils/swarmSession.ts');const a=session.loadSwarm(),b=session.loadSwarm();assert.deepEqual(a,b);assert.notEqual(a.sessionId,'default-session');assert.equal(a.token.length,64);
+const invite=session.swarmInvite(a,'https://github.com/test/repo');assert.deepEqual(session.parseSwarmInvite(invite),{...a,repoUrl:'https://github.com/test/repo'});assert.throws(()=>session.parseSwarmInvite(invite.replace('brain.vendra.uz','evil.invalid')));assert.throws(()=>session.parseSwarmInvite('https://brain.vendra.uz/session/testroom?repo=https://github.com/a/b&token=vd-live-old'));
+const {BrainClient}=await mod('src/services/brainClient.ts');const client=new BrainClient();client.connect=()=>{};client.setSession({...a,repoUrl:''});const sent=[];client.send=x=>sent.push(x);client.acquireLock('src/a.ts',{id:'codex',name:'Codex'});client.releaseLock('src/a.ts');assert.equal(sent[1].agentId,'codex');client.acquireLock('C:/private/file.ts');assert.equal(sent.length,2);client.dispose();
+console.log('Swarm paths, private room migration, stable invitations, validation and agent lock ownership passed.');

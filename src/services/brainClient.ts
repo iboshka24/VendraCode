@@ -21,7 +21,8 @@ import type {
  */
 
 const BRAIN_WS_URL = 'wss://brain.vendra.uz/ws';
-const DEFAULT_SESSION = 'default-session';
+const DEFAULT_SESSION = '';
+const portableFile = (file: string) => !!file && !file.startsWith('/') && !file.includes('\\') && !file.includes(':') && !file.split('/').includes('..');
 /** Fallback colors matching the agent-lane palette used across the app. */
 const PEER_COLORS = ['#7c3aed', '#38d9a9', '#4dabf7', '#f06595', '#ffa94d', '#b197fc'];
 
@@ -43,6 +44,7 @@ export function getBrainURL(): string {
 export interface BrainSessionInfo {
   sessionId: string;
   repoUrl: string;
+  token: string;
 }
 
 export interface BrainIdentity {
@@ -82,7 +84,9 @@ export class BrainClient {
   private peers: string[] = [];
   private repoUrl = '';
   private sessionId = DEFAULT_SESSION;
-  private heldLocks = new Set<string>();
+  private token = '';
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private heldLocks = new Map<string, BroadcastAgent>();
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
@@ -111,17 +115,21 @@ export class BrainClient {
   }
 
   /** Switches the active session/repo; reconnects only when something changed. */
-  setSession({ sessionId, repoUrl }: Partial<BrainSessionInfo>): void {
+  setSession({ sessionId, repoUrl, token }: Partial<BrainSessionInfo>): void {
     const nextSession = sessionId || DEFAULT_SESSION;
     const nextRepo = repoUrl || '';
-    const changed = nextSession !== this.sessionId || nextRepo !== this.repoUrl;
+    const nextToken = token || '';
+    const roomChanged = nextSession !== this.sessionId || nextToken !== this.token;
+    const changed = roomChanged || nextRepo !== this.repoUrl;
+    if (roomChanged) { this.heldLocks.clear(); this.peers = []; }
+    this.token = nextToken;
     this.sessionId = nextSession;
     this.repoUrl = nextRepo;
     if (changed) this.connect(true);
   }
 
   getSession(): BrainSessionInfo {
-    return { sessionId: this.sessionId, repoUrl: this.repoUrl };
+    return { sessionId: this.sessionId, repoUrl: this.repoUrl, token: this.token };
   }
 
   getStatus(): BrainConnectionStatus {
@@ -141,7 +149,7 @@ export class BrainClient {
   }
 
   connect(force = false): void {
-    if (this.disposed) return;
+    if (this.disposed || !this.sessionId || !this.token) return;
     if (!force && (this.status === 'online' || this.status === 'connecting')) return;
 
     this.clearReconnectTimer();
@@ -150,6 +158,7 @@ export class BrainClient {
 
     const params = new URLSearchParams({
       session: this.sessionId,
+      token: this.token,
       name: this.identity.peerName,
       peer: this.identity.peerId,
     });
@@ -171,9 +180,10 @@ export class BrainClient {
       this.reconnectAttempts = 0;
       this.setStatus('online');
       // Re-arm advisory locks held before a reconnect.
-      for (const filePath of this.heldLocks) {
-        this.send({ type: 'lock:acquire', filePath, agentId: this.identity.peerId, agentName: this.identity.peerName });
-      }
+      const renew = () => { for (const [filePath, who] of this.heldLocks) this.send({ type: 'lock:acquire', filePath, agentId: who.id, agentName: who.name }); };
+      renew();
+      if (this.heartbeat) clearInterval(this.heartbeat);
+      this.heartbeat = setInterval(renew, 60000);
       if (this.repoUrl) this.send({ type: 'repo:set', repoUrl: this.repoUrl });
     });
 
@@ -182,6 +192,7 @@ export class BrainClient {
     socket.addEventListener('close', () => {
       if (this.ws !== socket) return;
       this.ws = null;
+      if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
       if (this.disposed) return;
       this.setStatus('offline');
       this.scheduleReconnect();
@@ -203,6 +214,7 @@ export class BrainClient {
 
   /** Broadcasts Monaco content changes to every peer in the session. */
   sendDiff(filePath: string, changes: RemoteDiffChange[], agent?: BroadcastAgent): void {
+    if (!portableFile(filePath)) return;
     const normalized = changes
       .filter((change) => change && (change.text.length > 0 || change.rangeLength > 0))
       .map((change) => ({
@@ -255,8 +267,9 @@ export class BrainClient {
 
   /** Acquires an advisory lock so teammates see the file as "in use". */
   acquireLock(filePath: string, agent?: BroadcastAgent): void {
-    this.heldLocks.add(filePath);
+    if (!portableFile(filePath)) return;
     const who = agent || { id: this.identity.peerId, name: this.identity.peerName };
+    this.heldLocks.set(filePath, who);
     this.send({
       type: 'lock:acquire',
       filePath,
@@ -266,8 +279,9 @@ export class BrainClient {
   }
 
   releaseLock(filePath: string): void {
+    const who = this.heldLocks.get(filePath);
     this.heldLocks.delete(filePath);
-    this.send({ type: 'lock:release', filePath, agentId: this.identity.peerId });
+    if (who) this.send({ type: 'lock:release', filePath, agentId: who.id });
   }
 
   /** Raw JSON send (no-op when the socket is not open). */
@@ -336,6 +350,12 @@ export class BrainClient {
           this.repoUrl = data.repoUrl;
           this.emit({ type: 'repo', repoUrl: this.repoUrl });
         }
+        break;
+      }
+
+      case 'lock:conflict': {
+        this.heldLocks.delete(data.filePath);
+        this.emit({ type: 'action', action: { id: `lock-conflict-${Date.now()}`, agentId: this.identity.peerId, agentName: this.identity.peerName, action: 'lock_conflict', summary: `${data.filePath} is already in use by ${data.lockedBy?.agentName || 'a teammate'}`, targetFile: data.filePath, timestamp: Date.now() } });
         break;
       }
 
@@ -474,6 +494,7 @@ export class BrainClient {
   }
 
   private closeSocket(): void {
+    if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
     const socket = this.ws;
     this.ws = null;
     if (!socket) return;

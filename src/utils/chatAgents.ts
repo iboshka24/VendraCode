@@ -11,6 +11,7 @@ export interface ChatAgentOption {
 }
 
 export const CHAT_AGENTS: ChatAgentOption[] = [
+  { id: 'codex', name: 'Codex CLI', bin: 'codex', type: 'cli', icon: '🤖', color: '#10a37f', badge: 'CODEX', description: 'OpenAI Codex CLI using your local Codex login and configuration' },
   { id: 'vendra-ai', name: 'Vendra AI', bin: 'native', type: 'native', icon: '🤖', color: '#7c3aed', badge: 'HERMES', description: 'Autonomous agent with DuckDuckGo web search & desktop screen capture' },
   { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode', type: 'cli', icon: '⚡', color: '#ffa94d', badge: 'OPENCODE', description: 'Redirects prompts into local OpenCode CLI process & reflects actions in GUI' },
   { id: 'agy', name: 'Antigravity CLI', bin: 'agy', type: 'cli', icon: '🚀', color: '#38d9a9', badge: 'AGY', description: 'Google Antigravity CLI process coordinating via Brain' },

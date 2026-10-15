@@ -6,7 +6,7 @@ const { exec, execFile, spawn } = require('child_process');
 // Ensure PATH includes user bin folders where opencode, agy, etc. are located.
 // `VENDRA_CLI_PATH` (optional) is searched first — point it at a directory to
 // pin a specific CLI build, or at test fixtures.
-const homeDir = process.env.HOME || '';
+const homeDir = process.env.HOME || process.env.USERPROFILE || '';
 const cliOverrideDir = process.env.VENDRA_CLI_PATH;
 const extraPaths = [
   ...(cliOverrideDir ? [cliOverrideDir] : []),
@@ -14,11 +14,11 @@ const extraPaths = [
   path.join(homeDir, '.local', 'bin'),
   path.join(homeDir, '.gemini', 'antigravity-cli', 'bin'),
   path.join(homeDir, '.tokenharbor', 'bin'),
-  '/usr/local/bin',
-  '/usr/bin',
-  '/bin',
+  ...(process.platform === 'win32'
+    ? [path.join(process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming'), 'npm')]
+    : ['/usr/local/bin', '/usr/bin', '/bin']),
 ];
-process.env.PATH = Array.from(new Set([...extraPaths, ...(process.env.PATH ? process.env.PATH.split(':') : [])])).join(':');
+process.env.PATH = Array.from(new Set([...extraPaths, ...(process.env.PATH ? process.env.PATH.split(path.delimiter) : [])])).join(path.delimiter);
 
 let nodePty = null;
 try {
@@ -401,6 +401,47 @@ ipcMain.handle('git:worktree:remove', async (_event, { cwd, path: worktreePath }
 
 const { webSearch, fetchUrl, takeScreenshot, getSystemInfo } = require('./tools');
 
+let mcpManager;
+const getMcp = () => mcpManager ||= require('./mcp').createMcpManager(path.join(app.getPath('userData'), 'mcp-servers.json'));
+for (const method of ['list', 'save', 'remove', 'test', 'tools', 'call', 'close']) {
+  ipcMain.handle('mcp:' + method, async (_event, ...args) => getMcp()[method](...args));
+}
+app.on('before-quit', () => { mcpManager?.close().catch(() => {}); });
+ipcMain.handle('mcp:codexList', async () => {
+  const bin = resolveCliBinary('codex');
+  if (!bin) throw new Error('Codex CLI is not installed.');
+  const entries = JSON.parse(await runCliCapture(bin, ['mcp', 'list', '--json']));
+  return entries.map(s => ({ name: s.name, enabled: s.enabled, transport: s.transport?.type, command: s.transport?.command, url: s.transport?.url, authStatus: s.auth_status }));
+});
+ipcMain.handle('mcp:codexAdd', async (_event, input) => {
+  const server = require('./mcp').validateServer(input);
+  const bin = resolveCliBinary('codex'); if (!bin) throw new Error('Codex CLI is not installed.');
+  const args = ['mcp', 'add', server.name];
+  if (server.url) { args.push('--url', server.url); if (server.bearerTokenEnvVar) args.push('--bearer-token-env-var', server.bearerTokenEnvVar); }
+  else { for (const [key, value] of Object.entries(server.env || {})) args.push('--env', key + '=' + value); args.push('--', server.command, ...server.args); }
+  await runCliCapture(bin, args); return true;
+});
+ipcMain.handle('mcp:codexRemove', async (_event, name) => {
+  if (!/^[a-zA-Z0-9_-]{1,48}$/.test(name)) throw new Error('Invalid server name.');
+  const bin = resolveCliBinary('codex'); if (!bin) throw new Error('Codex CLI is not installed.');
+  await runCliCapture(bin, ['mcp', 'remove', name]); return true;
+});
+
+ipcMain.handle('swarm:share', async (_event, opts) => {
+  try { return { success: true, ...await require('./swarm').shareSwarm(opts) }; }
+  catch (error) { return { success: false, error: error.message }; }
+});
+
+ipcMain.handle('swarm:join', async (_event, opts) => {
+  try {
+    const result = await require('./swarm').joinSwarm({
+      sessionId: opts?.sessionId, token: opts?.token, repoUrl: opts?.repoUrl,
+      baseDir: path.join(app.getPath('documents'), 'VendraCode', 'Swarm'),
+    });
+    return { success: true, ...result };
+  } catch (error) { return { success: false, error: error.message }; }
+});
+
 // ─── Shell / External links ────────────────────────────────────────
 
 // ─── OS Utilities ───────────────────────────────────────────────────
@@ -570,7 +611,7 @@ function cliSearchDirs() {
 
 /** Every filesystem location a CLI would be probed at (diagnostics + search). */
 function cliCandidatePaths(binName) {
-  const exts = IS_WIN && !path.extname(binName) ? ['', ...windowsExts()] : [''];
+  const exts = IS_WIN && !path.extname(binName) ? windowsExts() : [''];
   const list = [];
   for (const dir of cliSearchDirs()) {
     for (const ext of exts) list.push(path.join(dir, binName + ext));
@@ -590,8 +631,9 @@ function resolveCliBinary(binName) {
     const out = require('child_process')
       .execFileSync(IS_WIN ? 'where' : 'which', [binName], { encoding: 'utf8', timeout: 4000 })
       .trim()
-      .split(/\r?\n/)[0];
-    if (out && fs.existsSync(out)) return out;
+      .split(/\r?\n/)
+      .find((candidate) => (!IS_WIN || windowsExts().includes(path.extname(candidate).toLowerCase())) && fs.existsSync(candidate));
+    if (out) return out;
   } catch { /* not on PATH — fall through to the well-known folders */ }
 
   // 2. Well-known install folders, honouring PATHEXT on Windows.
@@ -635,12 +677,11 @@ function killProcessTree(child, signal = 'SIGTERM') {
 
 /** Spawns an agent CLI; `.cmd`/`.bat` shims go through cmd.exe on Windows. */
 function spawnCli(cliBin, args, options = {}) {
-  // Own process group so Stop can take down wrappers + children.
-  const group = { detached: true, windowsHide: true };
+  // Unix uses a process group; Windows Stop uses taskkill /T.
+  // Detached cmd.exe can lose stdout when running npm shims.
+  const group = { detached: !IS_WIN, windowsHide: true };
   if (IS_WIN && /\.(cmd|bat)$/i.test(cliBin)) {
-    const comspec = process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
-    const line = [cliBin, ...args].map(quoteForCmd).join(' ');
-    return spawn(comspec, ['/d', '/s', '/c', line], { ...options, ...group, windowsVerbatimArguments: true });
+    return require('cross-spawn')(cliBin, args, { ...options, ...group });
   }
   return spawn(cliBin, args, { ...options, ...group });
 }
@@ -691,6 +732,7 @@ function runFile(bin, args, options = {}) {
 
 ipcMain.handle('cli:detectAll', async () => {
   const clis = [
+    { id: 'codex', name: 'Codex CLI', bin: 'codex' },
     { id: 'opencode', name: 'OpenCode CLI', bin: 'opencode' },
     { id: 'claude', name: 'Claude Code CLI', bin: 'claude' },
     { id: 'agy', name: 'Antigravity CLI', bin: 'agy' },
@@ -909,8 +951,13 @@ function resolveCredential(raw) {
 }
 
 ipcMain.handle('scanner:scanModels', async (_event, { providerType, baseUrl, apiKey }) => {
+  if (providerType === 'codex') {
+    const binary = resolveCliBinary('codex');
+    if (!binary) throw new Error('Codex CLI is not installed. Run npm install -g @openai/codex, then codex login.');
+    return require('./codex-models').listCodexModels({ binary, spawnCli, killProcessTree });
+  }
   const models = [];
-  const home = process.env.HOME || '';
+  const home = process.env.HOME || process.env.USERPROFILE || '';
 
   try {
     // 1. OpenCode & OpenRouter Free Models Catalog

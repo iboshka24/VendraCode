@@ -4,17 +4,17 @@ import {
   Github, Download, ArrowRight, Cloud, RefreshCw, Layers, Sparkles 
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { createSwarm, parseSwarmInvite, swarmInvite } from '@/utils/swarmSession';
 import { useAppStore } from '@/stores/appStore';
 
 export const ShareSessionModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
-  const { workspacePath, setWorkspacePath, setFileTree, setBrainSessionId, setBrainRepoUrl, worktrees, brainSessionId } = useAppStore();
+  const { workspacePath, setWorkspacePath, setFileTree, setBrainCredentials, setBrainRepoUrl, worktrees, brainSessionId, brainSessionToken, brainRepoUrl } = useAppStore();
   const [activeTab, setActiveTab] = useState<'share' | 'join'>('share');
   const [copied, setCopied] = useState(false);
-  const [githubRepoUrl, setGithubRepoUrl] = useState('https://github.com/ibrohim/VendraCode');
-  const [sessionId, setSessionId] = useState(brainSessionId);
+  const [githubRepoUrl, setGithubRepoUrl] = useState(brainRepoUrl || '');
   const [joinUrlInput, setJoinUrlInput] = useState('');
   const [isCloning, setIsCloning] = useState(false);
   const [cloneStatus, setCloneStatus] = useState<string | null>(null);
@@ -39,82 +39,36 @@ export const ShareSessionModal: React.FC<{
 
   if (!isOpen) return null;
 
-  const fullSessionUrl = `https://brain.vendra.uz/session/${sessionId}?repo=${encodeURIComponent(githubRepoUrl)}&token=vd-live-${Math.random().toString(36).substring(2, 8)}`;
+  const fullSessionUrl = swarmInvite({ sessionId: brainSessionId, token: brainSessionToken }, githubRepoUrl);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(fullSessionUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    setCloneStatus(null);
+    try {
+      const result = await window.vendraAPI.swarm.share({ sessionId: brainSessionId, token: brainSessionToken, repoUrl: githubRepoUrl });
+      if (!result.success) throw new Error(result.error);
+      setBrainRepoUrl(result.repoUrl || githubRepoUrl);
+      await navigator.clipboard.writeText(swarmInvite({ sessionId: brainSessionId, token: brainSessionToken }, result.repoUrl || githubRepoUrl));
+      setCopied(true); setTimeout(() => setCopied(false), 2000);
+    } catch (error: any) { setCloneStatus(error.message); }
   };
 
   const handleJoinFriendSession = async () => {
-    if (!joinUrlInput.trim()) return;
-
     setIsCloning(true);
-    setCloneStatus('Parsing friend session & GitHub repository...');
-
+    setCloneStatus('Checking invitation and preparing your isolated worktree…');
     try {
-      let parsedUrl: URL | null = null;
-      try {
-        parsedUrl = new URL(joinUrlInput.trim());
-      } catch {
-        parsedUrl = null;
-      }
-
-      // brain.vendra.uz/session/<id>?repo=<github url>
-      const sessionMatch = joinUrlInput.trim().match(/\/session\/([\w.-]+)/);
-      const sessionId = sessionMatch?.[1]
-        || (parsedUrl?.hostname === 'brain.vendra.uz' ? parsedUrl.pathname.replace(/^\/session\//, '') : '');
-      let targetRepo = parsedUrl?.searchParams.get('repo') || '';
-
-      if (!targetRepo && /github\.com/.test(joinUrlInput.trim())) {
-        targetRepo = joinUrlInput.trim();
-      }
-
-      // Join the friend's live brain session (joins the same WebSocket room)
-      if (sessionId) setBrainSessionId(sessionId);
-
-      if (targetRepo && window.vendraAPI?.os) {
-        const repoName = targetRepo.split('/').pop()?.replace(/\.git$/, '') || 'shared-repo';
-        const targetDir = `/home/ibrohim/${repoName}`;
-
-        setCloneStatus(`Cloning ${targetRepo} into isolated worktree...`);
-
-        // Check if directory already exists or clone
-        const cloneRes = await window.vendraAPI.os.exec(
-          `if [ -d "${targetDir}" ]; then cd "${targetDir}" && git pull origin main; else git clone "${targetRepo}" "${targetDir}"; fi`
-        );
-
-        if (cloneRes.error && !cloneRes.stdout) {
-          throw new Error(cloneRes.stderr || cloneRes.error);
-        }
-
-        // Advertise the shared repository to every peer in the session
-        setBrainRepoUrl(targetRepo);
-
-        setCloneStatus('✓ Successfully synchronized repository! Switching workspace...');
-        setWorkspacePath(targetDir);
-        localStorage.setItem('vendracode-workspace', targetDir);
-
-        const entries = await window.vendraAPI.fs.readDir(targetDir);
-        setFileTree(entries);
-
-        setTimeout(() => {
-          setIsCloning(false);
-          setCloneStatus(null);
-          onClose();
-        }, 1200);
-      } else {
-        throw new Error(
-          sessionId
-            ? `Joined session "${sessionId}", but a GitHub repository link is required to clone the shared repo. Paste the full invite link.`
-            : 'Please enter a valid session link with a linked GitHub repo'
-        );
-      }
-    } catch (err: any) {
-      setCloneStatus(`⚠️ Error: ${err.message}`);
-      setIsCloning(false);
-    }
+      const invite = parseSwarmInvite(joinUrlInput);
+      const result = await window.vendraAPI.swarm.join(invite);
+      if (!result.success || !result.path) throw new Error(result.error || 'Could not prepare the shared repository.');
+      const entries = await window.vendraAPI.fs.readDir(result.path);
+      setBrainCredentials(invite.sessionId, invite.token);
+      setBrainRepoUrl(result.repoUrl || invite.repoUrl);
+      setWorkspacePath(result.path);
+      localStorage.setItem('vendracode-workspace', result.path);
+      setFileTree(entries);
+      setCloneStatus(null);
+      onClose();
+    } catch (error: any) { setCloneStatus(error.message); }
+    finally { setIsCloning(false); }
   };
 
   return (
@@ -172,7 +126,7 @@ export const ShareSessionModal: React.FC<{
         {activeTab === 'share' ? (
           <div className="space-y-4">
             <p className="text-xs text-text-secondary leading-relaxed">
-              Share this session with teammates. Everyone links to the <strong>same GitHub repository</strong>, and their local agents (OpenCode, Claude Code, Codex) run in parallel in separate Git worktrees while edits stream live over the brain.
+              Share this private room with teammates using the <strong>same GitHub repository</strong>. Each friend joins in a separate local Git worktree. Live highlights and agent activity are shared; Git push/pull transfers committed code.
             </p>
 
             {/* Linked Central GitHub Repo */}
@@ -254,7 +208,7 @@ export const ShareSessionModal: React.FC<{
             <div className="p-3 bg-bgdeep rounded-xl border border-border">
               <label className="block text-[10px] text-text-muted font-semibold uppercase tracking-wider mb-1 flex items-center gap-1.5">
                 <Globe size={12} className="text-accent" />
-                Friend's Session URL or GitHub Repo
+                Friend's full invitation URL
               </label>
               <input
                 type="text"
@@ -292,6 +246,8 @@ export const ShareSessionModal: React.FC<{
           </div>
         )}
 
+        {cloneStatus && activeTab === 'share' && <p role="alert" className="text-xs text-warning mt-3">{cloneStatus}</p>}
+        <button type="button" className="btn btn-ghost text-xs mt-3" onClick={() => { const room = createSwarm(); setBrainCredentials(room.sessionId, room.token); setCloneStatus(null); setCopied(false); }}>New private swarm</button>
         <div className="flex justify-end gap-2 mt-5 pt-3 border-t border-border">
           <button
             type="button"

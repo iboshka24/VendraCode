@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('vendraAPI', {
+  mcp: Object.fromEntries(['list', 'save', 'remove', 'test', 'tools', 'call', 'close', 'codexList', 'codexAdd', 'codexRemove'].map(method => [method, (...args) => ipcRenderer.invoke('mcp:' + method, ...args)])),
   // File system
   fs: {
     readFile: (path) => ipcRenderer.invoke('fs:readFile', path),
@@ -48,6 +49,8 @@ contextBridge.exposeInMainWorld('vendraAPI', {
     worktreeRemove: (opts) => ipcRenderer.invoke('git:worktree:remove', opts),
   },
 
+  swarm: { join: (opts) => ipcRenderer.invoke('swarm:join', opts), share: (opts) => ipcRenderer.invoke('swarm:share', opts) },
+
   // Shell
   shell: {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
@@ -61,7 +64,7 @@ contextBridge.exposeInMainWorld('vendraAPI', {
     getSystemInfo: () => ipcRenderer.invoke('hermes:getSystemInfo'),
   },
 
-  // Local CLI Agent Integration (agy, cline, opencode, claude)
+  // Local CLI Agent Integration (codex, agy, cline, opencode, claude)
   cli: {
     detectAll: () => ipcRenderer.invoke('cli:detectAll'),
     spawnAgent: (opts) => ipcRenderer.invoke('cli:spawnAgent', opts),
