@@ -11,7 +11,12 @@ assert.deepEqual(fresh.args,['exec','--json','-c','model_reasoning_effort="low"'
 assert.equal(result.env.CODEX_HOME,'custom-home');assert.equal(result.env.OPENAI_API_KEY,'test-key');
 assert.equal(result.env.CODEX_THREAD_ID,undefined);assert.equal(result.env.CODEX_SESSION_ID,undefined);assert.equal(source.CODEX_THREAD_ID,'parent-thread');
 assert.deepEqual(input.args,['exec','resume','own-thread','--json']);
-const other=prepareAgentRun({...input,args:['run']});assert(other.args.at(-1).includes('User request:\nПривет'));
+for (const args of [['run','--format','json'],['-p'],['run','--auto'],['exec','resume','own-thread']]) {
+ const prompt='к тебе подключен roblox mcp?\nОтветь на сам вопрос: "да" или "нет".';
+ const run=prepareAgentRun({...input,args,prompt});
+ assert.deepEqual(run.args,[...args,prompt]);
+ assert(!run.args.some(arg=>arg.includes('developer_instructions')||arg.includes('User request:')));
+}
 console.log('Codex prompt passthrough, reasoning flags, resume ownership and parent-thread isolation passed.');
 
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
@@ -25,3 +30,11 @@ assert.equal(nativeCodexBinary(shim,'win32','x64'),native);
 assert.equal(nativeCodexBinary(path.join(root,'other.cmd'),'win32','x64'),path.join(root,'other.cmd'));
 assert.equal(nativeCodexBinary(shim,'linux','x64'),shim);
 console.log('Windows Codex npm shim resolves the installed native executable; other CLIs retain their launcher.');
+
+const {nativeAgentBinary}=require('../electron/agent-context');
+const openShim=path.join(root,'opencode.cmd');
+const openExe=path.join(root,'node_modules','@opencode','cli','bin','opencode.exe');
+fs.mkdirSync(path.dirname(openExe),{recursive:true});fs.writeFileSync(openExe,'fixture');
+assert.equal(nativeAgentBinary(openShim,'win32','x64'),openExe);
+assert.equal(nativeAgentBinary(shim,'win32','x64'),native);
+console.log('All external CLI prompts pass through unchanged; Windows OpenCode uses its installed executable.');

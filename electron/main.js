@@ -713,7 +713,7 @@ function killProcessTree(child, signal = 'SIGTERM') {
 
 /** Spawns an agent CLI; `.cmd`/`.bat` shims go through cmd.exe on Windows. */
 function spawnCli(cliBin, args, options = {}) {
-  cliBin = require('./agent-context').nativeCodexBinary(cliBin);
+  cliBin = require('./agent-context').nativeAgentBinary(cliBin);
   // Unix uses a process group; Windows Stop uses taskkill /T.
   // Detached cmd.exe can lose stdout when running npm shims.
   const group = { detached: !IS_WIN, windowsHide: true };
@@ -815,10 +815,7 @@ ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cw
       return { success: false, error: 'Open a project folder before starting Codex.' };
     }
     const prepared = require('./agent-context').prepareAgentRun({
-      args, prompt, cwd,
-      userData: app.getPath('userData'), appPath: app.getAppPath(),
-      codexHome: process.env.CODEX_HOME || path.join(homeDir, '.codex'),
-      env: process.env, agentId,
+      args, prompt, env: process.env, agentId,
     });
     const child = spawnCli(cliBin, prepared.args, {
       cwd: cwd || process.env.HOME,

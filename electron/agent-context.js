@@ -17,26 +17,17 @@ function agentEnvironment(source, agentId) {
   for (const key of ['CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE', 'CODEX_TASK_WORKSPACE_VERIFYING_IDENTITY', 'ELECTRON_RUN_AS_NODE']) delete env[key];
   return env;
 }
-function agentContext({ cwd, userData, codexHome, appPath }) {
-  return [
-    'You are the coding agent embedded inside VendraCode, a standalone Electron IDE. The user is speaking to you through its agent chat.',
-    'VendraCode is the host editor, not the OpenAI Codex desktop app. Do not ask the user which application VendraCode means.',
-    `Project workspace: ${cwd}`,
-    `VendraCode installation: ${appPath}`,
-    `VendraCode settings directory: ${userData}`,
-    `Native Vendra AI MCP config: ${path.join(userData, 'mcp-servers.json')} (JSON array).`,
-    `Codex CLI MCP config: ${path.join(codexHome, 'config.toml')}. Codex uses its own MCP configuration; native Vendra AI servers are separate.`,
-    'MCP management UI: Settings > MCP Servers. Roblox Studio can be connected to both agents there. For Codex configuration use codex mcp list/add/remove; do not edit unrelated settings or expose credentials.',
-    'For MCP availability, inspect your actual tools. A configured entry alone does not prove a live connection. Use read-only discovery before modifying any external application.',
-    'For Roblox, call list_roblox_studios first, then use its studio_id in later calls. If no Studio is returned, explain that Studio must be open with Assistant > Manage MCP Servers > Enable Studio as MCP server enabled.',
-    'Do not claim that MCP is disconnected just because no project source folder is selected: Roblox MCP connects to Studio independently of filesystem project code.'
-  ].join('\n');
-}
-function prepareAgentRun({ args, prompt, cwd, userData, codexHome, appPath, env, agentId }) {
+function prepareAgentRun({ args, prompt, env, agentId }) {
   const nextArgs = [...args];
-  // Codex receives exactly the user's prompt. Vendra only observes its JSONL events.
-  if (args[0] !== 'exec') prompt = agentContext({ cwd, userData, codexHome, appPath }) + '\n\nUser request:\n' + prompt;
+  // Every external CLI receives exactly the user's message, without host instructions.
   if (prompt) nextArgs.push(prompt);
   return { args: nextArgs, env: agentEnvironment(env, agentId) };
 }
-module.exports = { agentEnvironment, agentContext, prepareAgentRun, nativeCodexBinary };
+function nativeAgentBinary(binary, platform = process.platform, arch = process.arch) {
+  if (platform === 'win32' && /^opencode\.cmd$/i.test(path.basename(binary))) {
+    const native = path.join(path.dirname(binary), 'node_modules', '@opencode', 'cli', 'bin', 'opencode.exe');
+    if (fs.existsSync(native)) return native;
+  }
+  return nativeCodexBinary(binary, platform, arch);
+}
+module.exports = { agentEnvironment, prepareAgentRun, nativeCodexBinary, nativeAgentBinary };
