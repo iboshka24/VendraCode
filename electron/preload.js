@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('vendraAPI', {
-  mcp: Object.fromEntries(['list', 'save', 'remove', 'test', 'tools', 'call', 'close', 'codexList', 'codexAdd', 'codexRemove'].map(method => [method, (...args) => ipcRenderer.invoke('mcp:' + method, ...args)])),
+  mcp: Object.fromEntries(['list', 'save', 'remove', 'test', 'tools', 'call', 'close', 'codexList', 'codexAdd', 'codexRemove', 'codexTest', 'connectRoblox'].map(method => [method, (...args) => ipcRenderer.invoke('mcp:' + method, ...args)])),
   // File system
   fs: {
     readFile: (path) => ipcRenderer.invoke('fs:readFile', path),

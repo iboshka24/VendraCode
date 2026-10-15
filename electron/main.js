@@ -413,18 +413,54 @@ ipcMain.handle('mcp:codexList', async () => {
   const entries = JSON.parse(await runCliCapture(bin, ['mcp', 'list', '--json']));
   return entries.map(s => ({ name: s.name, enabled: s.enabled, transport: s.transport?.type, command: s.transport?.command, url: s.transport?.url, authStatus: s.auth_status }));
 });
-ipcMain.handle('mcp:codexAdd', async (_event, input) => {
+async function addCodexMcp(input) {
   const server = require('./mcp').validateServer(input);
   const bin = resolveCliBinary('codex'); if (!bin) throw new Error('Codex CLI is not installed.');
   const args = ['mcp', 'add', server.name];
   if (server.url) { args.push('--url', server.url); if (server.bearerTokenEnvVar) args.push('--bearer-token-env-var', server.bearerTokenEnvVar); }
   else { for (const [key, value] of Object.entries(server.env || {})) args.push('--env', key + '=' + value); args.push('--', server.command, ...server.args); }
   await runCliCapture(bin, args); return true;
-});
+}
+ipcMain.handle('mcp:codexAdd', (_event, input) => addCodexMcp(input));
 ipcMain.handle('mcp:codexRemove', async (_event, name) => {
   if (!/^[a-zA-Z0-9_-]{1,48}$/.test(name)) throw new Error('Invalid server name.');
   const bin = resolveCliBinary('codex'); if (!bin) throw new Error('Codex CLI is not installed.');
   await runCliCapture(bin, ['mcp', 'remove', name]); return true;
+});
+
+ipcMain.handle('mcp:codexTest', async (_event, name) => {
+  const bin = resolveCliBinary('codex'); if (!bin) throw new Error('Codex CLI is not installed.');
+  const entry = JSON.parse(await runCliCapture(bin, ['mcp', 'list', '--json'])).find(s => s.name === name);
+  if (!entry || !entry.enabled) throw new Error('Server is disabled or missing in Codex CLI.');
+  const transport = entry.transport;
+  const root = await fs.promises.mkdtemp(path.join(require('node:os').tmpdir(), 'vendra-mcp-probe-'));
+  const configFile = path.join(root, 'servers.json');
+  const probe = require('./mcp').createMcpManager(configFile);
+  try {
+    const config = transport.type === 'stdio'
+      ? { name, command: transport.command, args: transport.args, env: transport.env || {}, cwd: transport.cwd || undefined }
+      : { name, url: transport.url, bearerTokenEnvVar: transport.bearer_token_env_var };
+    await probe.save(config);
+    return await probe.test(name);
+  } finally {
+    await probe.close();
+    await fs.promises.unlink(configFile).catch(() => {});
+    await fs.promises.rmdir(root).catch(() => {});
+  }
+});
+ipcMain.handle('mcp:connectRoblox', async () => {
+  const launcher = process.platform === 'win32'
+    ? path.join(process.env.LOCALAPPDATA || '', 'Roblox', 'mcp.bat')
+    : '/Applications/RobloxStudio.app/Contents/MacOS/StudioMCP';
+  if (!fs.existsSync(launcher)) throw new Error('Roblox MCP launcher not found. Open Roblox Studio > Assistant > Manage MCP Servers and enable Studio as MCP server.');
+  const config = process.platform === 'win32'
+    ? { name: 'Roblox_Studio', command: 'cmd.exe', args: ['/d', '/c', launcher] }
+    : { name: 'Roblox_Studio', command: launcher, args: [] };
+  await getMcp().save(config);
+  const result = { native: true, codex: false, codexError: '', tools: [], connectionError: '' };
+  try { await addCodexMcp(config); result.codex = true; } catch (error) { result.codexError = error.message; }
+  try { result.tools = await getMcp().test(config.name); } catch (error) { result.connectionError = error.message; }
+  return result;
 });
 
 ipcMain.handle('swarm:share', async (_event, opts) => {
@@ -677,6 +713,7 @@ function killProcessTree(child, signal = 'SIGTERM') {
 
 /** Spawns an agent CLI; `.cmd`/`.bat` shims go through cmd.exe on Windows. */
 function spawnCli(cliBin, args, options = {}) {
+  cliBin = require('./agent-context').nativeCodexBinary(cliBin);
   // Unix uses a process group; Windows Stop uses taskkill /T.
   // Detached cmd.exe can lose stdout when running npm shims.
   const group = { detached: !IS_WIN, windowsHide: true };
@@ -777,18 +814,15 @@ ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cw
     if (args[0] === 'exec' && (!cwd || !path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory())) {
       return { success: false, error: 'Open a project folder before starting Codex.' };
     }
-    const procArgs = [...args];
-    if (prompt) {
-      procArgs.push(prompt);
-    }
-
-    const child = spawnCli(cliBin, procArgs, {
+    const prepared = require('./agent-context').prepareAgentRun({
+      args, prompt, cwd,
+      userData: app.getPath('userData'), appPath: app.getAppPath(),
+      codexHome: process.env.CODEX_HOME || path.join(homeDir, '.codex'),
+      env: process.env, agentId,
+    });
+    const child = spawnCli(cliBin, prepared.args, {
       cwd: cwd || process.env.HOME,
-      env: {
-        ...process.env,
-        VENDRA_COORDINATION: '1',
-        VENDRA_AGENT_ID: agentId,
-      },
+      env: prepared.env,
       // stdin must be closed, not piped: OpenCode reads stdin so prompts can
       // be piped into it, and an open pipe that never yields EOF makes the CLI
       // block forever before printing anything.

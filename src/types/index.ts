@@ -1,6 +1,6 @@
 // ─── Window API Types ──────────────────────────────────────────────
 
-export interface McpServerConfig { name: string; enabled?: boolean; command?: string; args?: string[]; env?: Record<string, string>; url?: string; bearerTokenEnvVar?: string; status?: string; error?: string; toolCount?: number }
+export interface McpServerConfig { name: string; enabled?: boolean; command?: string; args?: string[]; cwd?: string; env?: Record<string, string>; url?: string; bearerTokenEnvVar?: string; status?: string; error?: string; toolCount?: number }
 export interface VendraAPI {
   mcp: {
     list: () => Promise<McpServerConfig[]>;
@@ -13,6 +13,8 @@ export interface VendraAPI {
     codexList: () => Promise<Array<{ name: string; enabled: boolean; transport?: string; url?: string; command?: string; authStatus?: string }>>;
     codexAdd: (server: McpServerConfig) => Promise<boolean>;
     codexRemove: (name: string) => Promise<boolean>;
+    codexTest: (name: string) => Promise<Array<{ name: string; description: string }>>;
+    connectRoblox: () => Promise<{ native: boolean; codex: boolean; codexError: string; tools: Array<{ name: string; description: string }>; connectionError: string }>;
   };
   fs: {
     readFile: (path: string) => Promise<string>;

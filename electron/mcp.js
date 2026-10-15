@@ -19,6 +19,7 @@ function validateServer(input) {
     if (typeof input.command !== 'string' || !input.command.trim()) throw new Error('Provide a command or an HTTP URL.');
     if (input.args && (!Array.isArray(input.args) || input.args.some(x => typeof x !== 'string'))) throw new Error('Arguments must be a JSON array of strings.');
     if (input.env && (typeof input.env !== 'object' || Array.isArray(input.env) || Object.values(input.env).some(x => typeof x !== 'string'))) throw new Error('Environment must be an object of strings.');
+    if (input.cwd !== undefined) { if (typeof input.cwd !== 'string' || !require('node:path').isAbsolute(input.cwd)) throw new Error('MCP working directory must be absolute.'); value.cwd = input.cwd; }
     value.command = input.command.trim(); value.args = input.args || []; value.env = input.env || {};
   }
   return value;
@@ -43,7 +44,7 @@ function createMcpManager(configPath) {
           transport=new StreamableHTTPClientTransport(new URL(config.url),{requestInit:{headers}});
         }else{
           const env={...process.env,...config.env};delete env.ELECTRON_RUN_AS_NODE;
-          transport=new StdioClientTransport({command:config.command,args:config.args,env,stderr:'pipe'});
+          transport=new StdioClientTransport({command:config.command,args:config.args,cwd:config.cwd,env,stderr:'pipe'});
           transport.stderr?.on('data',()=>{});
         }
         await client.connect(transport,{timeout:15000});

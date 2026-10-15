@@ -1,0 +1,26 @@
+const assert=require('node:assert/strict');
+const {prepareAgentRun}=require('../electron/agent-context');
+const source={PATH:'keep',CODEX_HOME:'custom-home',CODEX_THREAD_ID:'parent-thread',CODEX_SESSION_ID:'parent-session',CODEX_INTERNAL_ORIGINATOR_OVERRIDE:'desktop',OPENAI_API_KEY:'test-key'};
+const input={args:['exec','resume','own-thread','--json'],prompt:'Привет',cwd:'C:/project',userData:'C:/settings',codexHome:'C:/codex',appPath:'C:/app',env:source,agentId:'codex-1'};
+const result=prepareAgentRun(input);
+assert.equal(result.args.at(-1),'Привет');assert(result.args.includes('own-thread'));
+const instructions=JSON.parse(result.args[result.args.indexOf('-c')+1].slice('developer_instructions='.length));
+for(const value of ['VendraCode','C:/project','C:/settings','list_roblox_studios','Codex CLI MCP config'])assert(instructions.includes(value));
+assert(!instructions.includes('test-key'));
+assert.equal(result.env.CODEX_HOME,'custom-home');assert.equal(result.env.OPENAI_API_KEY,'test-key');
+assert.equal(result.env.CODEX_THREAD_ID,undefined);assert.equal(result.env.CODEX_SESSION_ID,undefined);assert.equal(source.CODEX_THREAD_ID,'parent-thread');
+assert.deepEqual(input.args,['exec','resume','own-thread','--json']);
+const other=prepareAgentRun({...input,args:['run']});assert(other.args.at(-1).includes('User request:\nПривет'));
+console.log('Agent host context, explicit resume ownership, credential preservation and parent-thread isolation passed.');
+
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {nativeCodexBinary}=require('../electron/agent-context');
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'vendra native codex '));
+const shim=path.join(root,'codex.cmd');
+const native=path.join(root,'node_modules','@openai','codex','node_modules','@openai','codex-win32-x64','vendor','x86_64-pc-windows-msvc','bin','codex.exe');
+assert.equal(nativeCodexBinary(shim,'win32','x64'),shim);
+fs.mkdirSync(path.dirname(native),{recursive:true});fs.writeFileSync(native,'fixture');
+assert.equal(nativeCodexBinary(shim,'win32','x64'),native);
+assert.equal(nativeCodexBinary(path.join(root,'other.cmd'),'win32','x64'),path.join(root,'other.cmd'));
+assert.equal(nativeCodexBinary(shim,'linux','x64'),shim);
+console.log('Windows Codex npm shim resolves the installed native executable; other CLIs retain their launcher.');

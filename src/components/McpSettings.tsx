@@ -19,17 +19,26 @@ export const McpSettings: React.FC = () => {
   return <div className="space-y-4 text-xs">
     <h3 className="text-base font-semibold">MCP servers</h3>
     <p className="text-text-secondary">Connect external tools to your agent. Servers are configured on this computer; swarm invitations do not share their credentials.</p>
+    <div className="vc-card p-4 space-y-2">
+      <h4 className="font-semibold">Roblox Studio</h4>
+      <p className="text-text-secondary">Connect the installed Studio MCP to both Vendra AI and Codex CLI. Keep Studio open and enable Assistant → Manage MCP Servers → Enable Studio as MCP server.</p>
+      <button disabled={busy} className="btn btn-primary" onClick={() => void action(async () => {
+        const result = await window.vendraAPI.mcp.connectRoblox();
+        setTools(result.tools);
+        setMessage(`Vendra AI: saved. Codex CLI: ${result.codex ? 'saved' : result.codexError}. ${result.connectionError ? 'Connection failed: ' + result.connectionError : `MCP handshake successful: ${result.tools.length} tools discovered. Use list_roblox_studios to verify your open place.`} Start a new agent run to load the tools.`);
+      })}>Connect Roblox to both agents</button>
+    </div>
     <label className="block">Agent <select aria-label="MCP agent" className="vc-input ml-2" value={target} onChange={e => setTarget(e.target.value as 'native' | 'codex')}><option value="native">Vendra AI</option><option value="codex">Codex CLI</option></select></label>
     {message && <p role="alert" className="text-warning whitespace-pre-wrap">{message}</p>}
     <div className="space-y-2">
       {servers.length === 0 && <p className="text-text-muted">No MCP servers configured for this agent.</p>}
       {servers.map(server => <div key={server.name} className="border border-border rounded-xl p-3 space-y-2">
-        <div className="flex justify-between"><strong>{server.name}</strong><span>{target === 'native' ? `${server.enabled === false ? 'disabled' : server.status}${server.toolCount !== undefined ? ` · ${server.toolCount} tools` : ''}` : `${server.enabled ? 'enabled' : 'disabled'} · ${server.authStatus || 'Codex managed'}`}</span></div>
+        <div className="flex justify-between"><strong>{server.name}</strong><span>{target === 'native' ? `${server.enabled === false ? 'disabled' : server.status}${server.toolCount !== undefined ? ` · ${server.toolCount} tools` : ''}` : `${server.enabled ? 'configured · connection untested' : 'disabled'}`}</span></div>
         <p className="font-mono break-all">{server.url || server.command}</p>
         {server.error && <p className="text-warning">{server.error}</p>}
         <div className="flex gap-2">
+          <button disabled={busy || server.enabled === false} className="btn" onClick={() => void action(async () => { const discovered = await (target === 'native' ? window.vendraAPI.mcp.test(server.name) : window.vendraAPI.mcp.codexTest(server.name)); setTools(discovered); setMessage(`MCP handshake successful: ${discovered.length} tools discovered from ${server.name}.`); })}>Test MCP</button>
           {target === 'native' && <>
-            <button disabled={busy || server.enabled === false} className="btn btn-primary" onClick={() => void action(async () => { setTools(await window.vendraAPI.mcp.test(server.name)); setMessage('Connected to '+server.name); })}>Test connection</button>
             <button disabled={busy} className="btn btn-ghost" onClick={() => { const { status, error, toolCount, ...config } = server; setDraft(JSON.stringify(config, null, 2)); }}>Edit</button>
             <button disabled={busy} className="btn btn-ghost" onClick={() => void action(() => window.vendraAPI.mcp.save({ ...server, enabled: server.enabled === false }))}>{server.enabled === false ? 'Enable' : 'Disable'}</button>
           </>}
