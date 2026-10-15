@@ -33,10 +33,9 @@ function agentContext({ cwd, userData, codexHome, appPath }) {
   ].join('\n');
 }
 function prepareAgentRun({ args, prompt, cwd, userData, codexHome, appPath, env, agentId }) {
-  const context = agentContext({ cwd, userData, codexHome, appPath });
   const nextArgs = [...args];
-  if (args[0] === 'exec') nextArgs.push('-c', 'developer_instructions=' + JSON.stringify(context));
-  else prompt = context + '\n\nUser request:\n' + prompt;
+  // Codex receives exactly the user's prompt. Vendra only observes its JSONL events.
+  if (args[0] !== 'exec') prompt = agentContext({ cwd, userData, codexHome, appPath }) + '\n\nUser request:\n' + prompt;
   if (prompt) nextArgs.push(prompt);
   return { args: nextArgs, env: agentEnvironment(env, agentId) };
 }

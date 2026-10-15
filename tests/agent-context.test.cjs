@@ -4,14 +4,15 @@ const source={PATH:'keep',CODEX_HOME:'custom-home',CODEX_THREAD_ID:'parent-threa
 const input={args:['exec','resume','own-thread','--json'],prompt:'Привет',cwd:'C:/project',userData:'C:/settings',codexHome:'C:/codex',appPath:'C:/app',env:source,agentId:'codex-1'};
 const result=prepareAgentRun(input);
 assert.equal(result.args.at(-1),'Привет');assert(result.args.includes('own-thread'));
-const instructions=JSON.parse(result.args[result.args.indexOf('-c')+1].slice('developer_instructions='.length));
-for(const value of ['VendraCode','C:/project','C:/settings','list_roblox_studios','Codex CLI MCP config'])assert(instructions.includes(value));
-assert(!instructions.includes('test-key'));
+assert.deepEqual(result.args,[...input.args,'Привет']);
+assert(!result.args.some(arg=>arg.includes('developer_instructions')));
+const fresh=prepareAgentRun({...input,args:['exec','--json','-c','model_reasoning_effort="low"']});
+assert.deepEqual(fresh.args,['exec','--json','-c','model_reasoning_effort="low"','Привет']);
 assert.equal(result.env.CODEX_HOME,'custom-home');assert.equal(result.env.OPENAI_API_KEY,'test-key');
 assert.equal(result.env.CODEX_THREAD_ID,undefined);assert.equal(result.env.CODEX_SESSION_ID,undefined);assert.equal(source.CODEX_THREAD_ID,'parent-thread');
 assert.deepEqual(input.args,['exec','resume','own-thread','--json']);
 const other=prepareAgentRun({...input,args:['run']});assert(other.args.at(-1).includes('User request:\nПривет'));
-console.log('Agent host context, explicit resume ownership, credential preservation and parent-thread isolation passed.');
+console.log('Codex prompt passthrough, reasoning flags, resume ownership and parent-thread isolation passed.');
 
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {nativeCodexBinary}=require('../electron/agent-context');

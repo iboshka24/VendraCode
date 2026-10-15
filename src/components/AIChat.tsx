@@ -822,7 +822,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
         sessionId: activeChat?.opencodeSessionId,
         model: opencodeModelOverride(activeProvider || undefined, thinkingEffort),
       }),
-      codex: codexRunArgs({ sessionId: activeChat?.codexSessionId, effort: codexEfforts && !codexEfforts.includes(thinkingEffort) ? 'default' : thinkingEffort, model: codexModel || undefined }),
+      codex: codexRunArgs({ sessionId: activeChat?.codexSessionId, effort: thinkingEffort, model: codexModel || undefined }),
       claude: ['-p', '--dangerously-skip-permissions'],
       agy: ['run', '--auto'],
       cline: ['run'],
@@ -1377,7 +1377,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
               setIsAgentDropdownOpen(false);
               setIsProviderDropdownOpen(false);
             }}
-            title="Reasoning effort — CLI agents get a model variant (#high), the native agent a reasoning parameter"
+            title={selectedAgent.id === 'codex' ? 'Codex model_reasoning_effort — applied to the next message, including resumed chats' : 'Reasoning effort for the selected agent'}
           >
             <BrainCircuit className="w-3.5 h-3.5 text-accent" />
             <span className="text-[10px] font-semibold text-text-primary capitalize">
@@ -1390,7 +1390,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
               <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider">
                 Reasoning effort
               </div>
-              {(['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const).filter(v => selectedAgent.id !== 'codex' || v === 'default' || !codexEfforts || codexEfforts.includes(v)).map((v) => (
+              {(['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const).filter(v => selectedAgent.id !== 'codex' || v === 'default' || (codexEfforts?.length ? codexEfforts.includes(v) : ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v))).map((v) => (
                 <button
                   key={v}
                   type="button"
@@ -1405,8 +1405,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                 </button>
               ))}
               <p className="text-[9px] text-text-muted px-2 py-1 border-t border-border mt-1 leading-snug">
-                CLI: appends <span className="font-mono">#variant</span> to the model. Models without that
-                variant show the CLI's real error — pick <em>default</em> then.
+                {selectedAgent.id === 'codex' ? 'Controls Codex model_reasoning_effort directly on the next message. Low uses less reasoning; high and xhigh may take longer. Default uses Codex settings.' : 'Controls reasoning for this agent. OpenCode uses a model variant; native providers use a reasoning parameter.'}
               </p>
             </div>
           )}

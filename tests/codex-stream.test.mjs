@@ -26,3 +26,12 @@ assert.deepEqual(codexRunArgs({sessionId:'thread-123',effort:'high'}),['exec','r
 assert.deepEqual(codexRunArgs({model:'chosen-model'}),['exec','--json','--skip-git-repo-check','--model','chosen-model','--sandbox','workspace-write']);
 assert.deepEqual(codexRunArgs({sessionId:'thread-123',model:'chosen-model'}),['exec','resume','thread-123','--json','--skip-git-repo-check','--model','chosen-model']);
 console.log('Codex event fragmentation, tool lifecycle, errors and resume arguments passed.');
+
+for (const effort of ['none','minimal','low','medium','high','xhigh']) {
+ for (const sessionId of [undefined,'thread-existing']) {
+  const args=codexRunArgs({sessionId,effort});
+  assert.equal(args[args.indexOf('-c')+1],`model_reasoning_effort=${JSON.stringify(effort)}`);
+  assert(!args.some(arg=>arg.includes('developer_instructions')));
+ }
+}
+console.log('Selected Codex reasoning effort is explicit for both new and resumed runs.');
