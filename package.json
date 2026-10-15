@@ -1,7 +1,7 @@
 {
   "name": "vendracode",
-  "version": "1.4.3",
-  "description": "VendraCode — Multiplayer AI-native IDE. Your agents, working as one.",
+  "version": "1.5.0",
+  "description": "VendraCode \u2014 Multiplayer AI-native IDE. Your agents, working as one.",
   "homepage": "https://github.com/iboshka24/VendraCode",
   "author": "VendraCode Team <team@vendracode.dev>",
   "license": "MIT",
@@ -23,7 +23,7 @@
     "test:multiplayer": "node tests/multiplayer-verify.mjs",
     "test:zen": "node tests/zen-e2e.mjs",
     "test": "npm run test:unit && npm run test:app && npm run test:multiplayer && npm run test:multiplayer-agent && npm run test:zen && npm run test:agent && npm run test:stop",
-    "test:unit": "node tests/cli-locate.test.mjs && node tests/lock-store.test.mjs && node tests/daemon-token.test.mjs && node tests/toolchain-pins.test.mjs && node tests/codex-stream.test.mjs && node tests/codex-models.test.cjs && node tests/swarm-worker.test.mjs && node tests/swarm-join.test.cjs && node tests/swarm-paths.test.mjs && node tests/mcp.test.cjs && node tests/agent-context.test.cjs",
+    "test:unit": "node tests/cli-locate.test.mjs && node tests/lock-store.test.mjs && node tests/daemon-token.test.mjs && node tests/toolchain-pins.test.mjs && node tests/codex-stream.test.mjs && node tests/codex-models.test.cjs && node tests/swarm-worker.test.mjs && node tests/swarm-join.test.cjs && node tests/swarm-paths.test.mjs && node tests/mcp.test.cjs && node tests/agent-context.test.cjs && node tests/agent-events.test.mjs && node tests/agent-usage.test.cjs && node tests/agent-chat-store.test.cjs",
     "test:agent": "node tests/agent-e2e.mjs",
     "test:multiplayer-agent": "node tests/multiplayer-agent-verify.mjs",
     "test:stop": "node tests/stop-verify.mjs",

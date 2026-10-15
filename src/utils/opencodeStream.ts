@@ -12,6 +12,8 @@ import type { ChatSession } from '@/types';
 export interface ParsedCliChunk {
   /** Human-readable text to display (undefined for meta-only events). */
   text?: string;
+  reasoning?: { id: string; text: string; status?: string; append?: boolean };
+  usage?: { inputTokens?: number; outputTokens?: number; contextUsed?: number; contextWindow?: number; limits?: Array<{ label: string; remainingPercent?: number; resetsAt?: number; status?: string }>; costUsd?: number };
   /** Session id to persist for context continuation. */
   sessionId?: string;
   /** Fatal error surfaced by the CLI. */
@@ -20,7 +22,7 @@ export interface ParsedCliChunk {
    * A tool call/status update emitted by the CLI. Rendered as its own compact
    * message instead of being glued into the surrounding text.
    */
-  tool?: { id?: string; name: string; status?: string; input?: Record<string, unknown> };
+  tool?: { id?: string; name: string; status?: string; input?: Record<string, unknown>; output?: string };
 }
 
 const EVENT_LABELS: Record<string, string> = {
@@ -64,6 +66,10 @@ export function parseCliChunk(raw: string): ParsedCliChunk[] {
 
     const part = event.part;
     if (part && typeof part === 'object') {
+      if (part.type === 'reasoning' && typeof part.text === 'string') {
+        results.push({sessionId, reasoning:{id:part.id || 'reasoning',text:part.text,status:part.time?.end ? 'completed' : 'running'}}); continue;
+      }
+      if (part.type === 'step-finish' && part.tokens) results.push({sessionId,usage:{inputTokens:part.tokens.input,outputTokens:part.tokens.output,costUsd:part.cost}});
       // Assistant text tokens are what the user actually wants to read.
       if (typeof part.text === 'string' && part.text.trim()) {
         results.push({ sessionId, text: part.text });
@@ -97,7 +103,7 @@ export function parseCliChunk(raw: string): ParsedCliChunk[] {
   }
 
   // Drop label-only entries that carry no information
-  return results.filter((r) => r.text !== undefined || r.error !== undefined || r.sessionId !== undefined || r.tool !== undefined);
+  return results.filter((r) => r.reasoning !== undefined || r.usage !== undefined || r.text !== undefined || r.error !== undefined || r.sessionId !== undefined || r.tool !== undefined);
 }
 
 /** A real file mutation performed by an agent tool. */
@@ -214,3 +220,9 @@ export function chatPreview(chat: ChatSession | undefined): string {
 }
 
 export { EVENT_LABELS };
+
+/** JSONL boundaries are arbitrary on a process pipe. */
+export function createOpenCodeParser() {
+  let pending='';
+  return (chunk:string):ParsedCliChunk[] => { pending+=chunk; const lines=pending.split('\n'); pending=lines.pop()||''; return lines.flatMap(line=>parseCliChunk(line)); };
+}

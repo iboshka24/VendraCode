@@ -56,6 +56,7 @@ export interface VendraAPI {
     getSystemInfo: () => Promise<Record<string, any>>;
   };
   cli: {
+    usage: (opts: {sessionId?:string;refresh?:boolean}) => Promise<CliUsage>;
     detectAll: () => Promise<LocalCLIDetected[]>;
     spawnAgent: (opts: { agentId: string; cliBin: string; args?: string[]; cwd?: string; prompt?: string }) => Promise<{ success: boolean; error?: string }>;
     stopAgent: (agentId: string) => Promise<{ success: boolean; error?: string }>;
@@ -272,6 +273,18 @@ export interface ProviderConfig {
   cliModel?: boolean;
 }
 
+export interface CliUsage {
+  engine?: string;
+  contextUsed?: number;
+  contextWindow?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  limits?: Array<{label:string;remainingPercent?:number;resetsAt?:number;status?:string}>;
+  limitsError?: string;
+  contextError?: string;
+  checkedAt?: number;
+}
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
@@ -281,6 +294,8 @@ export interface ChatMessage {
   toolCallId?: string;
   toolName?: string;
   isStreaming?: boolean;
+  activity?: {kind:'run'|'thinking'|'diagnostic';status:string;eventId?:string};
+  cliUsage?: CliUsage;
 }
 
 /** A persisted AI chat (survives restarts, one per task/conversation). */
@@ -294,6 +309,7 @@ export interface ChatSession {
   /** OpenCode CLI session id — lets the agent continue with full context. */
   opencodeSessionId?: string;
   codexSessionId?: string;
+  claudeSessionId?: string;
   createdAt: number;
   updatedAt: number;
 }

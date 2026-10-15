@@ -148,8 +148,9 @@ interface AppState {
   setActiveChat: (id: string) => void;
   /** Replaces the message list of the currently active chat. */
   setActiveChatMessages: (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
+  setChatMessages: (chatId: string, updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
   /** Stores the CLI session id so the next message continues the same context. */
-  setChatCliSession: (chatId: string, sessionId?: string, engine?: 'opencode' | 'codex') => void;
+  setChatCliSession: (chatId: string, sessionId?: string, engine?: 'opencode' | 'codex' | 'claude') => void;
   isChatOpen: boolean;
   toggleChat: () => void;
   /** Width of the agent panel in px (drag-resizable, persisted). */
@@ -404,10 +405,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       persistChatSessions(sessions);
       return { chatSessions: sessions, activeChatId: targetId };
     }),
+  setChatMessages: (chatId, updater) => set((s) => {
+    const sessions=s.chatSessions.map(c=>c.id===chatId?{...c,messages:typeof updater==='function'?updater(c.messages):updater,updatedAt:Date.now()}:c);
+    persistChatSessions(sessions);
+    return {chatSessions:sessions};
+  }),
   setChatCliSession: (chatId, sessionId, engine = 'opencode') =>
     set((s) => {
       const sessions = s.chatSessions.map((c) =>
-        c.id === chatId ? { ...c, [engine === 'codex' ? 'codexSessionId' : 'opencodeSessionId']: sessionId || undefined, updatedAt: Date.now() } : c
+        c.id === chatId ? { ...c, [engine === 'codex' ? 'codexSessionId' : engine === 'claude' ? 'claudeSessionId' : 'opencodeSessionId']: sessionId || undefined, updatedAt: Date.now() } : c
       );
       persistChatSessions(sessions);
       return { chatSessions: sessions };

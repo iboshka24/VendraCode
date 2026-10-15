@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),path=require('node:path'),Module=require('node:module'),esbuild=require('esbuild');
+const storage=new Map();global.localStorage={getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v))};
+const built=esbuild.buildSync({entryPoints:[path.join(__dirname,'../src/stores/appStore.ts')],bundle:true,platform:'node',format:'cjs',write:false,alias:{'@':path.join(__dirname,'../src')}}).outputFiles[0].text;
+const mod=new Module(path.join(__dirname,'store-fixture.cjs'),module);mod.filename=path.join(__dirname,'store-fixture.cjs');mod.paths=module.paths;mod._compile(built,mod.filename);
+const store=mod.exports.useAppStore;
+const first=store.getState().createChat('codex'),second=store.getState().createChat('claude');
+assert.equal(store.getState().activeChatId,second);
+store.getState().setChatMessages(first,prev=>[...prev,{id:'activity',role:'system',content:'',timestamp:1,activity:{kind:'run',status:'completed'},cliUsage:{engine:'codex',contextUsed:100}}]);
+store.getState().setChatCliSession(second,'claude-session','claude');
+assert.equal(store.getState().activeChatId,second);
+assert.equal(store.getState().chatSessions.find(c=>c.id===second).messages.length,0);
+assert.equal(store.getState().chatSessions.find(c=>c.id===first).messages[0].cliUsage.contextUsed,100);
+assert.equal(JSON.parse(storage.get('vendracode-chats-v1')).find(c=>c.id===second).claudeSessionId,'claude-session');
+console.log('Background CLI activity/usage stays in its originating chat; Claude resume IDs persist independently.');

@@ -805,6 +805,21 @@ ipcMain.handle('cli:detectAll', async () => {
   }));
 });
 
+let codexLimitsCache = null, codexLimitsPending = null;
+ipcMain.handle('cli:usage', async (_event, { sessionId, refresh = false } = {}) => {
+  const usage = require('./agent-usage');
+  let context = {}, contextError;
+  try { context = await usage.codexContext(process.env.CODEX_HOME || path.join(homeDir, '.codex'), sessionId); } catch (error) { contextError = error.message; }
+  if (!codexLimitsPending && (refresh || !codexLimitsCache || Date.now() - codexLimitsCache.checkedAt > 60000)) {
+    const binary = resolveCliBinary('codex');
+    codexLimitsPending = (binary ? usage.readCodexLimits({binary,spawnCli,killProcessTree}) : Promise.reject(new Error('Codex CLI is not installed.')))
+      .then(limits => ({limits,checkedAt:Date.now()}),error=>({limits:[],limitsError:error.message,checkedAt:Date.now()}))
+      .then(value => { codexLimitsCache=value; return value; }).finally(()=>{codexLimitsPending=null;});
+  }
+  const limits = codexLimitsPending ? await codexLimitsPending : codexLimitsCache;
+  return {...context,...limits,contextError};
+});
+
 ipcMain.handle('cli:spawnAgent', async (_event, { agentId, cliBin, args = [], cwd, prompt }) => {
   if (runningCliProcesses.has(agentId)) {
     return { success: false, error: 'Agent already running' };

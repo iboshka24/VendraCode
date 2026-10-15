@@ -9,8 +9,11 @@ import { useAppStore } from '@/stores/appStore';
 import type { LocalCLIDetected, ChatSession } from '@/types';
 import { brainClient } from '@/services/brainClient';
 import { toWorkspaceRelative } from '@/utils/workspacePath';
+import { AgentActivity } from './AgentActivity';
+import { AgentUsagePanel } from './AgentUsagePanel';
+import {createClaudeParser,claudeRunArgs} from '@/utils/claudeStream';
 import { createCodexParser, codexRunArgs } from '@/utils/codexStream';
-import { parseCliChunk, opencodeRunArgs, opencodeModelOverride, deriveChatTitle, extractAgentWrite, toTelegramText } from '@/utils/opencodeStream';
+import { createOpenCodeParser, opencodeRunArgs, opencodeModelOverride, deriveChatTitle, extractAgentWrite, toTelegramText } from '@/utils/opencodeStream';
 import { MarkdownMessage } from './MarkdownMessage';
 import { CHAT_AGENTS, type ChatAgentOption } from '@/utils/chatAgents';
 import { ChatMessage, ToolCall, ProviderConfig, ApprovalRequest } from '@/types/index';
@@ -473,7 +476,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       while (keepRunning && turns < MAX_TURNS) {
         if (nativeStopRef.current) { keepRunning = false; break; }
         turns++;
-        const apiMessages = [systemMessage, ...currentMsgs].map(m => ({
+        const apiMessages = [systemMessage, ...currentMsgs.filter(m=>!m.activity && !m.cliUsage)].map(m => ({
           role: m.role,
           content: m.content || '',
           ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
@@ -592,12 +595,13 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
   const stopCliAgent = useCallback(async () => {
     const run = runningAgent;
     setRunningAgent(null);
+    setAgentStatus?.('idle');
     cleanupCliRun();
     setActiveAgentLabel('');
     if (run && window.vendraAPI?.cli) {
       try { await window.vendraAPI.cli.stopAgent(run.agentId); } catch {}
       setMessages(prev => prev.map(m => (m.id === run.messageId
-        ? { ...m, content: `${m.content || ''}\n\n⏹ **Stopped by user.**` }
+        ? { ...m, content: '', activity: {kind:'run',status:'stopped'} }
         : m)));
     }
   }, [runningAgent, cleanupCliRun]);
@@ -615,6 +619,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     runWorkspace: string
   ) => {
     const api = window.vendraAPI;
+    const originChatId=activeChat?.id;
+    const setMessages=(updater:ChatMessage[]|((prev:ChatMessage[])=>ChatMessage[]))=>{if(originChatId)useAppStore.getState().setChatMessages(originChatId,updater);};
     if (!api?.cli) {
       setMessages(prev => [...prev, {
         role: 'assistant', id: `err-${Date.now()}`, timestamp: Date.now(),
@@ -646,10 +652,12 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     const startedAt = Date.now();
 
     const seedMessage: ChatMessage = {
-      role: 'assistant',
+      role: 'system',
       id: messageId,
       timestamp: startedAt,
-      content: `⚡ **${agent.name}** running in \`${cliBin}\`\n\nWorkspace: \`${runWorkspace || '—'}\`\n\n⏳ running…`,
+      content: '',
+      activity: {kind:'run',status:'running'},
+      cliUsage: {engine:agent.id},
     };
     setMessages([...baseMessages, seedMessage]);
     setAgentStatus?.('running');
@@ -688,12 +696,12 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       setMessages(prev => [...prev, { role: 'assistant', id, timestamp: Date.now(), content: '…' }]);
     };
     /** One compact message per tool call; a later status updates the same row. */
-    const upsertToolMessage = (call: { id?: string; name: string; status?: string }) => {
+    const upsertToolMessage = (call: { id?: string; name: string; status?: string; input?: Record<string,unknown>; output?:string }) => {
       const key = call.id || `${call.name}-${toolMsgIds.size}`;
-      const content = JSON.stringify({ cliTool: true, status: call.status || '' });
+      const content = JSON.stringify({ cliTool: true, status: call.status || '', input:call.input, output:call.output?.slice(0,16000) });
       const existing = toolMsgIds.get(key);
       if (existing) {
-        setMessages(prev => prev.map(m => (m.id === existing ? { ...m, content } : m)));
+        setMessages(prev => prev.map(m => (m.id === existing ? { ...m, content: JSON.stringify({...JSON.parse(m.content),...Object.fromEntries(Object.entries(JSON.parse(content)).filter(([,v])=>v!==undefined))}) } : m)));
         return;
       }
       const id = `cli-tool-${startedAt}-${toolMsgIds.size + 1}`;
@@ -708,19 +716,30 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     };
 
     const chatId = activeChat?.id;
-    const parseCodex = createCodexParser();
+    const parseCodex = createCodexParser(), parseOpenCode=createOpenCodeParser(),parseClaude=createClaudeParser();
+    const thinkingMessages=new Map<string,string>();
+    let diagnosticId='';
+
 
     const detachOutput = api.cli.onAgentOutput((chunk) => {
       if (chunk.agentId !== agentId) return;
 
-      // OpenCode prints NDJSON events: readable text, tool calls, session id.
-      if (agent.id === 'opencode' || agent.id === 'codex') {
-        const parsedChunks = agent.id === 'codex'
-          ? (chunk.type === 'stderr' ? [{ text: chunk.text || '' }] : parseCodex(chunk.text || ''))
-          : parseCliChunk(chunk.text || '');
+      if(chunk.type==='stderr'){
+        const clean=(chunk.text||'').split('\n').filter(line=>line.trim()&&!/Reading additional input from stdin|WARN\s|shell snapshot not supported/i.test(line)).join('\n');
+        if(clean){if(!diagnosticId){diagnosticId=`cli-diag-${startedAt}`;setMessages(prev=>[...prev,{id:diagnosticId,role:'system',timestamp:Date.now(),content:clean,activity:{kind:'diagnostic',status:'info'}}]);}else setMessages(prev=>prev.map(m=>m.id===diagnosticId?{...m,content:(m.content+'\n'+clean).slice(-12000)}:m));}return;
+      }
+      if (['opencode','codex','claude'].includes(agent.id)) {
+        const parsedChunks = agent.id==='codex'?parseCodex(chunk.text||''):agent.id==='claude'?parseClaude(chunk.text||''):parseOpenCode(chunk.text||'');
         for (const parsed of parsedChunks) {
-          if (parsed.sessionId && chatId && parsed.sessionId !== (agent.id === 'codex' ? activeChat?.codexSessionId : activeChat?.opencodeSessionId)) {
-            setChatCliSession(chatId, parsed.sessionId, agent.id === 'codex' ? 'codex' : 'opencode');
+          if (parsed.sessionId && chatId && parsed.sessionId !== (agent.id === 'codex' ? activeChat?.codexSessionId : agent.id==='claude'?activeChat?.claudeSessionId:activeChat?.opencodeSessionId)) {
+            setChatCliSession(chatId, parsed.sessionId, agent.id === 'codex' ? 'codex' : agent.id==='claude'?'claude':'opencode');
+          }
+          if(parsed.usage){const fields=Object.fromEntries(Object.entries(parsed.usage).filter(([,v])=>v!==undefined));setMessages(prev=>prev.map(m=>m.id===messageId?{...m,cliUsage:{...m.cliUsage,...fields, ...(parsed.usage?.limits?{limits:[...new Map([...(m.cliUsage?.limits||[]),...parsed.usage.limits].map(l=>[l.label,l])).values()]}:{}),engine:agent.id}}:m));}
+          if(parsed.reasoning){
+            flush();cliStreamBufferRef.current='';textMsgId=null;
+            const r=parsed.reasoning;let id=thinkingMessages.get(r.id);
+            if(!id){id=`cli-thinking-${startedAt}-${thinkingMessages.size}`;thinkingMessages.set(r.id,id);setMessages(prev=>[...prev,{id:id!,role:'system',content:r.text,timestamp:Date.now(),activity:{kind:'thinking',status:r.status||'running',eventId:r.id}}]);}
+            else setMessages(prev=>prev.map(m=>m.id===id?{...m,content:r.append?m.content+r.text:r.text,activity:{kind:'thinking',status:r.status||'running',eventId:r.id}}:m));
           }
           if (parsed.error) {
             setMessages(prev => [...prev, {
@@ -823,7 +842,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
         model: opencodeModelOverride(activeProvider || undefined, thinkingEffort),
       }),
       codex: codexRunArgs({ sessionId: activeChat?.codexSessionId, effort: thinkingEffort, model: codexModel || undefined }),
-      claude: ['-p', '--dangerously-skip-permissions'],
+      claude: claudeRunArgs(activeChat?.claudeSessionId),
       agy: ['run', '--auto'],
       cline: ['run'],
     };
@@ -848,7 +867,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       setAgentStatus?.('idle');
       setActiveAgentLabel('');
       setMessages(prev => prev.map(m => (m.id === messageId
-        ? { ...m, content: `${seedMessage.content}\n\n⚠️ **Failed to start ${agent.name}**: ${spawnError}` }
+        ? { ...m, content: spawnError,activity:{kind:'run',status:'error'} }
         : m)));
       return;
     }
@@ -860,7 +879,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       const poll = setInterval(() => {
         if (closed) { clearInterval(poll); resolve(); }
       }, 120);
-      cliDetachRef.current.push(() => clearInterval(poll));
+      cliDetachRef.current.push(() => {clearInterval(poll);closed=true;resolve();});
     });
 
     // Flush any pending text into its own bubble first — cleanupCliRun()
@@ -878,16 +897,9 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
     }
     agentLockedFiles.clear();
 
-    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-    const verdict = (exitCode === 0)
-      ? `✅ exit 0 · ${seconds}s`
-      : `❌ exit ${exitCode ?? '?'} · ${seconds}s`;
-
-    // The streamed text and tool calls live in their own messages now; the
-    // seed card only swaps its "running…" line for the verdict.
-    setMessages(prev => prev.map(m => (m.id === messageId
-      ? { ...m, content: seedMessage.content.replace('⏳ running…', verdict) }
-      : m)));
+    setMessages(prev => prev.map(m => m.id === messageId
+      ? {...m,content:exitCode!==null&&exitCode!==0?'The CLI stopped with an error. Open its diagnostic card for details.':'',activity:{kind:'run',status:exitCode===null?'stopped':exitCode===0?'completed':'error'}}
+      : m.activity?.kind==='thinking'&&thinkingMessages.has(m.activity.eventId||'')?{...m,activity:{...m.activity,status:'completed'}}:m));
 
     // Real side effect: the workspace watcher refreshes the explorer for us.
     if (runWorkspace && api.fs) {
@@ -1441,6 +1453,9 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
 
         <AnimatePresence initial={false}>
           {messages.map((msg) => {
+            if(msg.activity)return <AgentActivity key={msg.id} message={msg} live={agentStatus==='running'}/>;
+            if(msg.id.startsWith('cli-run-'))return null;
+
             if (msg.role === 'user') {
               return (
                 <motion.div 
@@ -1456,7 +1471,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
               );
             }
             
-            if (msg.role === 'assistant' && msg.content) {
+            const assistantContent=msg.content.replace(/^Reading additional input from stdin\.\.\.\s*/, '');
+            if (msg.role === 'assistant' && assistantContent) {
               return (
                 <motion.div 
                   key={msg.id}
@@ -1468,7 +1484,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
                     <span>{selectedAgent.icon}</span>
                   </div>
                   <div className="bg-surface border border-border text-text-primary px-3 py-2 rounded-xl max-w-[90%] select-text overflow-hidden">
-                    <MarkdownMessage content={msg.content} />
+                    <MarkdownMessage content={assistantContent} />
                   </div>
                 </motion.div>
               );
@@ -1499,32 +1515,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
 
               // 0. CLI agent tool call (OpenCode / Claude Code / …)
               if (parsed.cliTool) {
-                const status = String(parsed.status || '');
-                const done = status === 'completed';
-                const failed = status === 'error';
-                return (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, scale: 0.97 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="flex justify-start ml-8"
-                  >
-                    <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-chip border border-border px-2.5 py-1 rounded-md">
-                      {failed
-                        ? <AlertCircle className="w-3 h-3 text-danger" />
-                        : done
-                          ? <CheckCircle2 className="w-3 h-3 text-success" />
-                          : <Loader2 className="w-3 h-3 animate-spin text-accent" />}
-                      <Wrench className="w-3 h-3 text-accent" />
-                      <span className="font-mono text-text-primary">{msg.toolName}</span>
-                      {status && (
-                        <span className={`text-[9px] uppercase ${failed ? 'text-danger' : done ? 'text-success' : 'text-text-muted'}`}>
-                          {status}
-                        </span>
-                      )}
-                    </div>
-                  </motion.div>
-                );
+                return <AgentActivity key={msg.id} message={msg} live={agentStatus==='running'}/>;
               }
 
               // 1. Hermes Web Search Tool Card
@@ -1705,19 +1696,20 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
         )}
 
         {/* Running Indicator */}
-        {agentStatus === 'running' && !pendingApproval && (
+        {agentStatus === 'running' && !pendingApproval && selectedAgent.type==='native' && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="flex justify-start gap-2 items-center text-xs text-text-muted ml-8"
           >
             <div className="dotpulse" />
-            <span className="font-mono text-[11px]">{selectedAgent.name} is running in worktree...</span>
+            <span className="font-mono text-[11px]">WORKING</span>
           </motion.div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
+      <AgentUsagePanel engine={selectedAgent.id} sessionId={selectedAgent.id==='codex'?activeChat?.codexSessionId:selectedAgent.id==='claude'?activeChat?.claudeSessionId:activeChat?.opencodeSessionId} chatId={activeChat?.id} busy={agentStatus==='running'} streamUsage={[...messages].reverse().find(m=>m.cliUsage?.engine===selectedAgent.id)?.cliUsage}/>
       {/* ─── Input Area with Hermes Skill Triggers ─── */}
       <div className="p-3 border-t border-border bg-bgtitle shrink-0">
         {/* Slash-command autocomplete */}

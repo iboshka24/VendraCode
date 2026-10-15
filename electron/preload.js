@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('vendraAPI', {
   // Local CLI Agent Integration (codex, agy, cline, opencode, claude)
   cli: {
     detectAll: () => ipcRenderer.invoke('cli:detectAll'),
+    usage: (opts) => ipcRenderer.invoke('cli:usage', opts),
     spawnAgent: (opts) => ipcRenderer.invoke('cli:spawnAgent', opts),
     stopAgent: (agentId) => ipcRenderer.invoke('cli:stopAgent', agentId),
     onAgentOutput: (callback) => {
