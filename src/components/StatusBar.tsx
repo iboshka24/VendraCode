@@ -58,7 +58,7 @@ export function StatusBar() {
             {modifiedCount} modified
           </span>
         ) : (
-          <span className="text-[10px] text-text-hint">Clean worktree</span>
+          <span className="text-[10px] text-text-hint">{workspacePath ? 'Clean worktree' : 'No project open'}</span>
         )}
 
         {/* Advisory Locks held by teammates */}
@@ -69,11 +69,7 @@ export function StatusBar() {
           </span>
         )}
 
-        {/* Advisory lock policy (what the IDE guarantees, not a live claim) */}
-        <span className="flex items-center gap-1 text-text-hint" title="Files edited by a teammate are locked for you before you touch them">
-          <Shield size={10} />
-          Locks: {lockCount > 0 ? `${lockCount} active` : 'none'}
-        </span>
+
       </div>
 
       {/* Right */}

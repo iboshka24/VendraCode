@@ -508,7 +508,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // Terminal
-  isTerminalOpen: true,
+  isTerminalOpen: false,
   toggleTerminal: () => set((s) => ({ isTerminalOpen: !s.isTerminalOpen })),
 
   // Search

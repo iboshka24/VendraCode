@@ -326,11 +326,11 @@ export const AIChat: React.FC = () => {
     }
   };
 
-  const handleScanModels = async () => {
+  const handleScanModels = async (showPicker = true) => {
     const sequence = ++modelScanSequence.current;
     setIsScanningModels(true);
     setModelScanError('');
-    setIsModelPickerOpen(true);
+    if (showPicker) setIsModelPickerOpen(true);
     try {
       if (window.vendraAPI?.scanner) {
         const list = await window.vendraAPI.scanner.scanModels({
@@ -340,7 +340,7 @@ export const AIChat: React.FC = () => {
         });
         if (sequence !== modelScanSequence.current) return;
         setScannedModels(list);
-        setIsModelPickerOpen(true);
+        if (showPicker) setIsModelPickerOpen(true);
       }
     } catch (err) {
       if (sequence === modelScanSequence.current) {
@@ -358,7 +358,7 @@ export const AIChat: React.FC = () => {
     setModelScanError('');
     setIsScanningModels(false);
     setIsModelPickerOpen(false);
-    if (selectedAgent.id === 'codex') void handleScanModels();
+    if (selectedAgent.id === 'codex') void handleScanModels(false);
   }, [selectedAgent.id]);
 
   /**
@@ -1120,9 +1120,9 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
   };
 
   return (
-    <div className="flex flex-col h-full bg-bgside border-l border-border text-text-primary select-none">
+    <div className="vc-agent-panel flex flex-col h-full bg-bgside text-text-primary select-none">
       {/* ─── VendraCode Top Header with chat, agent & model pills ─── */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-bgtitle shrink-0 gap-2">
+      <div className="vc-agent-toolbar flex flex-wrap items-center px-4 py-3 border-b border-border shrink-0 gap-2">
         {/* Chat switcher (persistent conversations) */}
         <div className="relative">
           <button
@@ -1251,7 +1251,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
         </div>
 
         {/* Provider Pill (OpenAI, Anthropic, NVIDIA NIM) */}
-        <div className="relative">
+        <div className={selectedAgent.id === 'codex' ? 'hidden' : 'relative'}>
           <button 
             type="button"
             className="agentpill"
@@ -1298,7 +1298,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
           <button 
             type="button"
             className="agentpill flex items-center gap-1.5"
-            onClick={handleScanModels}
+            onClick={() => void handleScanModels()}
             title="Scan live models for active provider/CLI"
           >
             {isScanningModels ? (
@@ -1313,7 +1313,7 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
           </button>
 
           {isModelPickerOpen && (
-            <div className="absolute right-0 mt-1.5 w-72 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1.5 max-h-64 overflow-y-auto">
+            <div className="absolute left-0 mt-1.5 w-72 bg-surface border border-border-light rounded-xl shadow-2xl z-50 p-1.5 max-h-64 overflow-y-auto">
               <div className="text-[10px] text-text-muted px-2 py-1 font-semibold uppercase tracking-wider flex justify-between items-center">
                 <span>Live Discovered Models ({scannedModels.length})</span>
                 <button type="button" onClick={() => setIsModelPickerOpen(false)} className="text-text-muted hover:text-text-primary text-xs">✕</button>
@@ -1426,41 +1426,16 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
       {/* ─── Chat Messages Stream ─── */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center p-6 text-text-muted">
-            <div 
-              className="w-10 h-10 rounded-xl flex items-center justify-center mb-3 text-lg border border-border shadow-md"
-              style={{ backgroundColor: `${selectedAgent.color}20` }}
-            >
-              <span>{selectedAgent.icon}</span>
-            </div>
-            <h3 className="text-sm font-semibold text-text-primary mb-1">
-              {selectedAgent.name} Active
-            </h3>
-            <p className="text-xs text-text-secondary max-w-[270px] leading-relaxed mb-4">
-              {selectedAgent.description}
-            </p>
-            <div className="flex flex-wrap gap-1.5 justify-center max-w-[280px]">
-              <button 
-                type="button"
-                onClick={() => setInputValue('Create a new JWT authentication middleware in src/auth')}
-                className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
-              >
-                ⚡ Write JWT Auth
-              </button>
-              <button 
-                type="button"
-                onClick={triggerQuickSearch}
-                className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
-              >
-                🔍 Search Web
-              </button>
-              <button 
-                type="button"
-                onClick={triggerInstantScreenshot}
-                className="amoeba-chip hover:border-border-light hover:text-text-primary transition-colors text-[11px] cursor-pointer"
-              >
-                📸 Take Screenshot
-              </button>
+          <div className="vc-chat-empty">
+            <div className="vc-eyebrow"><span className="vc-small-mark"/> {selectedAgent.name}</div>
+            <h3>What shall we build?</h3>
+            <p>A fresh conversation.<br/>A good place to start something.</p>
+            <div className="vc-chat-suggestions">
+              {[
+                ['Explore this project', 'Explain the structure of this project and how its main parts work together.'],
+                ['Build something new', 'Help me plan and implement a new feature in this project. Ask me what I want to build.'],
+                ['Review my changes', 'Review the current uncommitted changes for bugs and suggest improvements.'],
+              ].map(([label, prompt]) => <button type="button" key={label} onClick={() => setInputValue(prompt)}><span>{label}</span><span>↗</span></button>)}
             </div>
           </div>
         )}
@@ -1802,8 +1777,8 @@ Workspace directory: ${workspacePath || '/home/ibrohim'}`
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Ask ${selectedAgent.name} to write code, edit files, or search... (Enter to send · / for commands)`}
-            className="w-full max-h-32 min-h-[44px] bg-transparent text-text-primary text-xs p-3 resize-none outline-none leading-relaxed"
+            placeholder={`Ask ${selectedAgent.name} anything…`}
+            className="w-full max-h-32 min-h-[70px] bg-transparent text-text-primary text-xs p-3 resize-none outline-none leading-relaxed"
             rows={Math.min(5, inputValue.split('\n').length || 1)}
           />
           <div className="p-2 shrink-0">

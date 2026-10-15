@@ -224,16 +224,14 @@ export const MissionControl: React.FC = () => {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold tracking-tight text-text-primary flex items-center gap-2">
-              <span className="text-accent">mission</span>
-              <span className="text-text-muted">/</span>
-              <span>control</span>
+              <span>Mission Control</span>
             </h1>
             <span className="amoeba-chip text-text-secondary font-mono text-[11px]">
               {repoName}
             </span>
           </div>
           <p className="text-xs text-text-secondary mt-1">
-            Every agent, every model and every teammate in one room — fed by the same live brain.
+            A shared space for your agents and your team.
           </p>
         </div>
 
@@ -243,7 +241,7 @@ export const MissionControl: React.FC = () => {
             <span className={brainStatus === 'online' ? 'dotpulse' : 'w-1.5 h-1.5 rounded-full bg-text-muted'} />
             <div className="flex flex-col">
               <span className="font-semibold text-text-primary text-[11px] leading-tight flex items-center gap-1">
-                SESSION <span className="text-text-muted font-normal">{brainSessionId}</span>
+                SESSION <span className="text-text-muted font-normal" title={brainSessionId}>{brainSessionId.slice(0, 8)}</span>
               </span>
               <span className={`text-[10px] flex items-center gap-1 ${brainStatus === 'online' ? 'text-ok' : 'text-text-muted'}`}>
                 {brainStatus === 'online'

@@ -146,7 +146,7 @@ export function FileExplorer() {
   return (
     <aside className="w-60 shrink-0 flex flex-col h-full bg-bgside border-r border-border text-text-secondary select-none">
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-border bg-bgtitle">
-        <span className="text-[10px] font-bold tracking-wider uppercase text-text-muted">FILES</span>
+        <span className="text-[10px] font-bold tracking-wider uppercase text-text-muted">EXPLORER</span>
         <div className="flex gap-1">
           <button 
             type="button"
@@ -169,11 +169,11 @@ export function FileExplorer() {
       <div className="flex-1 overflow-y-auto py-1 px-1">
         {fileTree.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-text-muted px-4 text-center">
-            <p className="text-xs mb-3 text-text-secondary">No repository opened</p>
+            <p className="text-xs mb-3 text-text-secondary">Your project lives here</p>
             <button 
               type="button"
               onClick={openFolder}
-              className="btn btn-primary text-xs"
+              className="btn text-xs"
             >
               Open Folder
             </button>

@@ -374,54 +374,17 @@ export function CodeEditor() {
   // Welcome Screen when no files open
   if (openTabs.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-background select-none">
-        <motion.div
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center max-w-sm px-6"
-        >
-          <div className="flex justify-center mx-auto mb-4 drop-shadow-[0_0_24px_rgba(124,58,237,0.3)]">
-            <VendraLogo size={52} />
+      <div className="vc-welcome flex-1 flex items-center justify-center bg-background select-none">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="vc-welcome-content">
+          <div className="vc-eyebrow"><span className="vc-small-mark"/> YOUR WORKSPACE</div>
+          <h1>A little space.<br/><span>For your next big idea.</span></h1>
+          <p>Code, think, and build together.<br/>Your project and your agents, in one place.</p>
+          <div className="vc-welcome-actions">
+            <button type="button" onClick={handleOpenFolder} className="vc-launch vc-launch-primary"><FolderOpen size={17}/><span><strong>Open Repository</strong><small>Pick up where you left off</small></span><span className="vc-action-arrow">↗</span></button>
+            <button type="button" onClick={() => setActiveView('mission-control')} className="vc-launch"><Compass size={17}/><span><strong>Mission Control</strong><small>Bring your agents together</small></span><span className="vc-action-arrow">↗</span></button>
+            <button type="button" onClick={toggleChat} className="vc-launch"><Sparkles size={17}/><span><strong>Start a conversation</strong><small>Make something with your agent</small></span><span className="vc-action-arrow">↗</span></button>
           </div>
-          <h2 className="text-base font-bold text-text-primary mb-1 tracking-tight font-mono">
-            Vendra<strong className="text-ok font-black">Code</strong> IDE
-          </h2>
-          <p className="text-text-muted text-xs leading-relaxed mb-6">
-            Multiplayer AI-Native Development Environment with The Shared Brain & Hermes agent skills.
-          </p>
-
-          <div className="flex flex-col gap-2 items-center">
-            <button
-              type="button"
-              onClick={handleOpenFolder}
-              className="btn btn-ghost w-52 text-xs justify-center"
-            >
-              <FolderOpen size={14} />
-              <span>Open Repository</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveView('mission-control')}
-              className="btn btn-ghost w-52 text-xs justify-center"
-            >
-              <Compass size={14} />
-              <span>Mission Control</span>
-            </button>
-            <button
-              type="button"
-              onClick={toggleChat}
-              className="btn btn-ghost w-52 text-xs justify-center"
-            >
-              <Sparkles size={14} className="text-accent" />
-              <span>AI Agent Prompt</span>
-            </button>
-          </div>
-
-          <div className="mt-8 pt-4 border-t border-border flex justify-center gap-4 text-[10px] text-text-muted font-mono">
-            <span>Ctrl+O · Open</span>
-            <span>Ctrl+S · Save</span>
-            <span>Ctrl+Shift+P · Palette</span>
-          </div>
+          <div className="vc-welcome-shortcuts"><span><kbd>Ctrl O</kbd> Open project</span><span><kbd>Ctrl Shift P</kbd> Commands</span></div>
         </motion.div>
       </div>
     );
